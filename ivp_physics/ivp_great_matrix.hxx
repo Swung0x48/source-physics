@@ -28,19 +28,16 @@
 #define IVP_VECFPU_MEMSHIFT 3          // 8 Bytes per Floating Point Number
 #endif
 #else
-#ifdef PLATFORM_64BITS
-#define IVP_VECFPU_SIZE 4                      // taken from vphysics retail
-// #define IVP_VECFPU_LD 0 //unused
-#define IVP_VECFPU_MASK 0xfffffffc             // taken from vphysics retail
-#define IVP_VECFPU_MEM_MASK 0xfffffffffffffff0 // taken from vphysics retail
-#define IVP_VECFPU_MEMSHIFT 2                  // taken from vphysics retail
-#else
+// BallanceMMO: one block size on every platform.  The 64-bit branch that
+// used to live here (IVP_VECFPU_SIZE 4, "taken from vphysics retail")
+// changed the accumulation order of the matrix row helpers, so a 64-bit
+// build produced different friction results than the 32-bit game.  The
+// scalar path is the one the original 32-bit physics_RT ran.
 #define IVP_VECFPU_SIZE 1
 #define IVP_VECFPU_LD 0
 #define IVP_VECFPU_MASK 0xffffffff
-#define IVP_VECFPU_MEM_MASK 0xfffffff8 // 8Byte per Block
-#define IVP_VECFPU_MEMSHIFT 3          // 8 Bytes per Floating Point Number
-#endif
+#define IVP_VECFPU_MEM_MASK (~((uintp)7)) // 8Byte per Block, pointer-width safe
+#define IVP_VECFPU_MEMSHIFT 3             // 8 Bytes per Floating Point Number
 #endif
 #endif
 
