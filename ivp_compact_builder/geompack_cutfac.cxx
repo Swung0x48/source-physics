@@ -5,6 +5,7 @@
 #include <ivp_physics.hxx>
 #include <ivp_betterdebugmanager.hxx>
 #include <geompack.hxx>
+#include <ivu_libm.hxx>
 
 
 void IVP_Geompack::cutfac_(
@@ -348,9 +349,9 @@ L20:
 			d__2,d__3)) {
 		    intang = IVP_PI;
 		} else if (cp[kmax - 1] * nrmlc[kmax] > 0.) {
-		    intang = acos(dotp);
+		    intang = ivp_libm::acos(dotp);
 		} else {
-		    intang = pi2 - acos(dotp);
+		    intang = pi2 - ivp_libm::acos(dotp);
 		}
 		if (intang < iamin) {
 		    iamin = intang;
@@ -521,9 +522,9 @@ L20:
 		 {
 	    intang = IVP_PI;
 	} else if (cp[kmax - 1] * nrmlc[kmax] > 0.) {
-	    intang = acos(dotp);
+	    intang = ivp_libm::acos(dotp);
 	} else {
-	    intang = pi2 - acos(dotp);
+	    intang = pi2 - ivp_libm::acos(dotp);
 	}
 	if (intang < iamin) {
 	    iamin = intang;
@@ -857,7 +858,7 @@ L150:
     if (eflag) {
 	dotp = -dotp;
     }
-    angr = IVP_PI - acos(dotp);
+    angr = IVP_PI - ivp_libm::acos(dotp);
     dir1[0] = nrmlc[2] * dir[2] - nrmlc[3] * dir[1];
     dir1[1] = nrmlc[3] * dir[0] - nrmlc[1] * dir[2];
     dir1[2] = nrmlc[1] * dir[1] - nrmlc[2] * dir[0];
@@ -939,7 +940,7 @@ L150:
 	if (abs(dotp) > 1. - this->tolerance) {
 	    dotp = d_sign(1.0, dotp);
 	}
-	ang = acos(dotp);
+	ang = ivp_libm::acos(dotp);
 	if (kmax == 1) {
 	    cp[0] = dir[1] * dir1[2] - dir[2] * dir1[1];
 	} else if (kmax == 2) {

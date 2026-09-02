@@ -5,6 +5,7 @@
 #include "ivp_physics.hxx"
 #include <ivp_betterdebugmanager.hxx>
 #include <geompack.hxx>
+#include <ivu_libm.hxx>
 
 
 void IVP_Geompack::resedg_(
@@ -429,7 +430,7 @@ L30:
 	    if (abs(dotp) > 1. - this->tolerance) {
 		dotp = d_sign(1.0, dotp);
 	    }
-	    t = acos(dotp);
+	    t = ivp_libm::acos(dotp);
 	    if (t < anglo || t > anghi) {
 		goto L30;
 	    }
@@ -503,11 +504,11 @@ L80:
 
     i__1 = nang;
     for (i__ = 1; i__ <= i__1; ++i__) {
-	cn = cos(ang[i__ - 1]);
+	cn = ivp_libm::cos(ang[i__ - 1]);
 	if ((i__2 = facesdata[fr * 3 + 2], abs(i__2)) != p) {
 	    cn = -cn;
 	}
-	ce = sin(ang[i__ - 1]);
+	ce = ivp_libm::sin(ang[i__ - 1]);
 	nrmlc[0] = cn * normals[fr * 3 + 1] + ce * enr[0];
 	nrmlc[1] = cn * normals[fr * 3 + 2] + ce * enr[1];
 	nrmlc[2] = cn * normals[fr * 3 + 3] + ce * enr[2];

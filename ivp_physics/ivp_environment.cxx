@@ -58,6 +58,7 @@
 #include <ivp_authenticity.hxx>
 
 #include "ivp_polygon.hxx"
+#include <ivu_libm.hxx>
 
 #if !defined(IVP_VERSION_SDK) && !defined(IVP_VERSION_EVAL)
 #pragma error("You have to define IVP_VERSION_SDK or IVP_VERSION_EVAL")
@@ -279,7 +280,7 @@ void IVP_Environment::set_delta_PSI_time(IVP_DOUBLE psi_time)
     IVP_ASSERT(psi_time <= IVP_MAX_DELTA_PSI_TIME);
     delta_PSI_time = psi_time;
     inv_delta_PSI_time = 1.0f / delta_PSI_time;
-    integrated_energy_damp = IVP_Inline_Math::ivp_expf(IVP_FLOAT(log(0.9f)) * delta_PSI_time);
+    integrated_energy_damp = IVP_Inline_Math::ivp_expf(IVP_FLOAT(ivp_libm::log(0.9f)) * delta_PSI_time);
 }
 
 IVP_Environment::~IVP_Environment()

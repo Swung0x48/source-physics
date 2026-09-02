@@ -1,6 +1,7 @@
 // Copyright (C) Ipion Software GmbH 1999-2000. All rights reserved.
 
 #include <ivu_linear.hxx>
+#include <ivu_libm.hxx>
 
 #define IVP_QUAT_DELTA 1e-6f  // error tolerance
 
@@ -655,13 +656,13 @@ void APIENTRY gluEulerToQuat_EXT(GLIVP_FLOAT roll, GLIVP_FLOAT pitch, GLIVP_FLOA
 {
     IVP_FLOAT cr, cp, cy, sr, sp, sy, cpcy, spsy;
 
-    cr = cosf(roll / 2);
-    cp = cosf(pitch / 2);
-    cy = cosf(yaw / 2);
+    cr = ivp_libm::cosf(roll / 2);
+    cp = ivp_libm::cosf(pitch / 2);
+    cy = ivp_libm::cosf(yaw / 2);
 
-    sr = sinf(roll / 2);
-    sp = sinf(pitch / 2);
-    sy = sinf(yaw / 2);
+    sr = ivp_libm::sinf(roll / 2);
+    sp = ivp_libm::sinf(pitch / 2);
+    sy = ivp_libm::sinf(yaw / 2);
 
     cpcy = cp * cy;
     spsy = sp * sy;
@@ -750,7 +751,7 @@ void APIENTRY gluQuatSetValue_EXT(GL_QUAT *quat, GLIVP_FLOAT x, GLIVP_FLOAT y, G
     quat->y = y;
     quat->z = z;
 
-    quat->w = (GLIVP_FLOAT)cos(angle / 2.0f);
+    quat->w = (GLIVP_FLOAT)ivp_libm::cos(angle / 2.0f);
 }
 
 /*SDOC***********************************************************************
@@ -938,14 +939,14 @@ void APIENTRY gluQuatExp_EXT(GL_QUAT *q1, GL_QUAT *q2)
 
     len1 = (GLIVP_FLOAT)IVP_Inline_Math::sqrtd(q1->x * q1->x + q1->y * q1->y + q1->z * q1->z);
     if (len1 > 0.0f)
-        len2 = (GLIVP_FLOAT)sin(len1) / len1;
+        len2 = (GLIVP_FLOAT)ivp_libm::sin(len1) / len1;
     else
         len2 = 1.0f;
 
     q2->x = q1->x * len2;
     q2->y = q1->y * len2;
     q2->z = q1->z * len2;
-    q2->w = cos(len1);
+    q2->w = ivp_libm::cos(len1);
 }
 
 /*SDOC***********************************************************************
@@ -969,7 +970,7 @@ void APIENTRY gluQuatLog_EXT(GL_QUAT *q1, GL_QUAT *q2)
 
     // make sure we do not divide by 0
     if (q1->w != 0.0f)
-        length = atan(length / q1->w);
+        length = ivp_libm::atan(length / q1->w);
     else
         length = (GLIVP_FLOAT)IVP_PI / 2;
 
@@ -1003,7 +1004,7 @@ void APIENTRY gluQuatLnDif_EXT(GL_QUAT *q1, GL_QUAT *q2, GL_QUAT *res)
     len = sqrt(dif.x * dif.x + dif.y * dif.y + dif.z * dif.z);
     s = qt_dot(a, b);
     if (s != 0.0f)
-        len1 = atan(len / s);
+        len1 = ivp_libm::atan(len / s);
     else
         len1 = IVP_PI / 2;
     if (len != 0.0f)

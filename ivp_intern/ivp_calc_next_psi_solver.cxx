@@ -16,6 +16,7 @@
 #include <ivp_performancecounter.hxx>
 #include <ivu_float.hxx>
 #include <ivu_min_hash.hxx>
+#include <ivu_libm.hxx>
 
 IVP_DOUBLE IVP_Calc_Next_PSI_Solver::get_longest_time_step_dependent_on_rot()
 {
@@ -217,7 +218,7 @@ void IVP_Calc_Next_PSI_Solver::calc_psi_rotation_axis(const IVP_U_Quat *q_core_f
         IVP_IF(1)
         {
 #if defined(DEBUG) && 0
-            IVP_DOUBLE ref_angle = asin(sqrt(qlen)) - 1E9f; //@@@ was P_DOUBLE_RES; difference between old and new (fast) calculation should not be too great;
+            IVP_DOUBLE ref_angle = ivp_libm::asin(sqrt(qlen)) - 1E9f; //@@@ was P_DOUBLE_RES; difference between old and new (fast) calculation should not be too great;
             IVP_ASSERT(abs_angle >= ref_angle);
 #endif
         }

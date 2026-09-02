@@ -5,6 +5,7 @@
 #include <ivp_physics.hxx>
 #include <ivp_betterdebugmanager.hxx>
 #include <geompack.hxx>
+#include <ivu_libm.hxx>
 
 
 void IVP_Geompack::dsphdc_() {
@@ -267,7 +268,7 @@ void IVP_Geompack::dsphdc_() {
 		    if (fflag != gflag) {
 			dotp = -dotp;
 		    }
-		    ang = IVP_PI - acos(dotp);
+		    ang = IVP_PI - ivp_libm::acos(dotp);
 /*                 Determine whether edge angle is reflex. */
 		    for (l = 1; l <= 3; ++l) {
 			ab[l - 1] = vcl[l + lb * 3] - vcl[l + la * 3];

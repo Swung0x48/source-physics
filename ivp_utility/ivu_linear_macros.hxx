@@ -2,6 +2,8 @@
 
 // IVP_EXPORT_PUBLIC
 
+#include "ivu_libm.hxx"
+
 #ifndef IVP_U_LINEAR_MACROS_INCLUDED
 #define IVP_U_LINEAR_MACROS_INCLUDED
 
@@ -84,7 +86,7 @@ inline void IVP_U_Float_Point::set_multiple(const IVP_U_Quat *q_source, IVP_DOUB
 inline IVP_FLOAT IVP_Inline_Math::save_acosf(IVP_FLOAT angle)
 {
     // on windows compiler we ge not a number when angle >= 1.0
-    return angle >= 1.0f ? 0.0f : (IVP_FLOAT)acos(angle);
+    return angle >= 1.0f ? 0.0f : (IVP_FLOAT)ivp_libm::acos(angle);
 }
 
 inline int IVP_Inline_Math::int_div_2(int a)
