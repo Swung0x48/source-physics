@@ -32,6 +32,28 @@ public:
     IVP_Vector_of_Cores_2 sim_unit_cores;
     IVP_U_Vector<IVP_Sim_Unit_Controller_Core_List> controller_cores;
 
+    // BallanceMMO engine change #5: the movement (freeze) check runs on a
+    // per-unit countdown instead of the environment's single counter, which
+    // was decremented by every simulated unit and re-armed with ivp_rand().
+    // With the global counter one unit's sleep schedule depended on how many
+    // other units happened to be awake, so two worlds that differ only in
+    // unrelated bodies (another player's sector, a locally reset mechanism)
+    // froze the same ball a few PSIs apart.  First check after
+    // IVP_MOVEMENT_CHECK_COUNT PSIs like the retail environment, then every
+    // 17 PSIs (retail rolled 15..19).
+    enum { MOVEMENT_CHECK_FIRST = 10, MOVEMENT_CHECK_PERIOD = 17 };
+    short next_movement_check;
+    inline IVP_BOOL must_perform_movement_check()
+    {
+        next_movement_check--;
+        if (next_movement_check <= 0)
+        {
+            next_movement_check = MOVEMENT_CHECK_PERIOD;
+            return IVP_TRUE;
+        }
+        return IVP_FALSE;
+    }
+
     IVP_Simulation_Unit();
     ~IVP_Simulation_Unit();
 

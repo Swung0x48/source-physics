@@ -307,6 +307,7 @@ IVP_Simulation_Unit::IVP_Simulation_Unit()
     sim_unit_movement_type = IVP_MT_NOT_SIM;
     sim_unit_just_slowed_down = IVP_FALSE;
     sim_unit_has_fast_objects = IVP_FALSE;
+    next_movement_check = MOVEMENT_CHECK_FIRST;
     prev_sim_unit = NULL;
     next_sim_unit = NULL;
 }
@@ -1030,7 +1031,7 @@ void IVP_Simulation_Unit::simulate_single_sim_unit_psi(IVP_Event_Sim *es, IVP_U_
     if (fast_moving_flag < 0)
     {
         this->sim_unit_has_fast_objects = IVP_TRUE;
-        check_movement_state = es->environment->must_perform_movement_check(); // do not always make movement check
+        check_movement_state = this->must_perform_movement_check(); // do not always make movement check (per unit, see .hxx)
         //	check_movement_state = IVP_FALSE;   // this might be wrong if flag is set to IVP_MT_SLOW
     }
     else
@@ -1041,7 +1042,7 @@ void IVP_Simulation_Unit::simulate_single_sim_unit_psi(IVP_Event_Sim *es, IVP_U_
             this->sim_unit_clear_movement_check_values();
         }
         sim_unit_has_fast_objects = IVP_FALSE;
-        check_movement_state = es->environment->must_perform_movement_check(); // do not always make movement check
+        check_movement_state = this->must_perform_movement_check(); // do not always make movement check (per unit, see .hxx)
     }
 
     // controllers are sorted
