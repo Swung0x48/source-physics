@@ -61,6 +61,7 @@
 #include <ivp_authenticity.hxx>
 
 #include "ivp_polygon.hxx"
+#include <ivu_libm.hxx>
 
 #if !defined(IVP_VERSION_SDK) && !defined(IVP_VERSION_EVAL)
 #pragma error("You have to define IVP_VERSION_SDK or IVP_VERSION_EVAL")
@@ -190,7 +191,7 @@ IVP_Environment::IVP_Environment(IVP_Environment_Manager *manager, IVP_Applicati
     const IVP_U_Float80 logarithm = fp.log2_multiply(fp.load(0.9f), fp.natural_logarithm_of_two());
     integrated_energy_damp = fp.store_double(fp.exponential(fp.multiply(logarithm, fp.load(delta_PSI_time))));
 #else
-    integrated_energy_damp=exp(log(0.9f)*delta_PSI_time);
+    integrated_energy_damp = ivp_libm::exp(ivp_libm::log(0.9f) * delta_PSI_time);
 #endif
     cluster_manager = new IVP_Cluster_Manager(this);
     sim_units_manager = new IVP_Sim_Units_Manager(this);

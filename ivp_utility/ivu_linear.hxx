@@ -10,6 +10,7 @@
 
 #include <ivu_types.hxx>
 #include <ivu_x87_config.hxx>
+#include <ivu_libm.hxx>
 #if IVP_ENABLE_X87_EMULATION || IVP_X87_ARITHMETIC_TRANSCENDENTAL != IVP_X87_OFF
 #include <ivu_x87.hxx>
 #endif
@@ -395,39 +396,39 @@ public:
     };
     static IVP_DOUBLE ivp_sinf(IVP_DOUBLE f)
     {
-        return sinf(f);
+        return ivp_libm::sinf(f);
     };
     static IVP_DOUBLE ivp_cosf(IVP_DOUBLE f)
     {
-        return cosf(f);
+        return ivp_libm::cosf(f);
     };
     static IVP_DOUBLE sind(IVP_DOUBLE f)
     {
-        return sinf(f);
+        return ivp_libm::sinf(f);
     };
     static IVP_DOUBLE cosd(IVP_DOUBLE f)
     {
-        return cosf(f);
+        return ivp_libm::cosf(f);
     };
     static IVP_DOUBLE acosd(IVP_DOUBLE f)
     {
-        return acosf(f);
+        return ivp_libm::acosf(f);
     };
     static IVP_DOUBLE asind(IVP_DOUBLE f)
     {
-        return asinf(f);
+        return ivp_libm::asinf(f);
     };
     static IVP_DOUBLE atand(IVP_DOUBLE f)
     {
-        return atanf(f);
+        return ivp_libm::atanf(f);
     };
     static IVP_DOUBLE ivp_expf(IVP_DOUBLE f)
     {
-        return expf(f);
+        return ivp_libm::expf(f);
     };
     static IVP_DOUBLE atan2d(IVP_DOUBLE f1, IVP_DOUBLE f2)
     {
-        return atan2f(f1, f2);
+        return ivp_libm::atan2f(f1, f2);
     };
 #else
     static IVP_DOUBLE fabsd(IVP_DOUBLE f)
@@ -491,39 +492,39 @@ public:
 #else
     static IVP_DOUBLE ivp_sinf(IVP_DOUBLE f)
     {
-        return sin(f);
+        return ivp_libm::sin(f);
     };
     static IVP_DOUBLE ivp_cosf(IVP_DOUBLE f)
     {
-        return cos(f);
+        return ivp_libm::cos(f);
     };
     static IVP_DOUBLE sind(IVP_DOUBLE f)
     {
-        return sin(f);
+        return ivp_libm::sin(f);
     };
     static IVP_DOUBLE cosd(IVP_DOUBLE f)
     {
-        return cos(f);
+        return ivp_libm::cos(f);
     };
     static IVP_DOUBLE acosd(IVP_DOUBLE f)
     {
-        return acos(f);
+        return ivp_libm::acos(f);
     };
     static IVP_DOUBLE asind(IVP_DOUBLE f)
     {
-        return asin(f);
+        return ivp_libm::asin(f);
     };
     static IVP_DOUBLE atand(IVP_DOUBLE f)
     {
-        return atan(f);
+        return ivp_libm::atan(f);
     };
     static IVP_DOUBLE ivp_expf(IVP_DOUBLE f)
     {
-        return exp(f);
+        return ivp_libm::exp(f);
     };
     static IVP_DOUBLE atan2d(IVP_DOUBLE f1, IVP_DOUBLE f2)
     {
-        return atan2(f1, f2);
+        return ivp_libm::atan2(f1, f2);
     };
 #endif
 #endif

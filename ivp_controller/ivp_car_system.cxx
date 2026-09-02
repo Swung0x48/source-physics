@@ -20,6 +20,7 @@
 #include <ivp_template_constraint.hxx>
 #include <ivp_constraint_car.hxx>
 #include <ivp_car_system.hxx>
+#include <ivu_libm.hxx>
 
 /////////////////////////////////
 
@@ -779,9 +780,9 @@ IVP_FLOAT IVP_Car_System::calc_ackerman_angle(IVP_FLOAT alpha, IVP_FLOAT dx, IVP
 	if (a < 0.001f)
 		return alpha; // numerical reasons
 
-	IVP_DOUBLE tan_alpha = tan(a);
+	IVP_DOUBLE tan_alpha = ivp_libm::tan(a);
 	IVP_DOUBLE h = (dz * tan_alpha) / (dx * tan_alpha + dz);
-	IVP_DOUBLE beta = atan(h);
+	IVP_DOUBLE beta = ivp_libm::atan(h);
 	IVP_DOUBLE signum = (alpha < 0.0f) ? -1.0f : 1.0f;
 	return (IVP_FLOAT)(beta * signum);
 }

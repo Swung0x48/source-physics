@@ -2,6 +2,8 @@
 
 // IVP_EXPORT_PUBLIC
 
+#include "ivu_libm.hxx"
+
 #ifndef IVP_U_LINEAR_MACROS_INCLUDED
 #define IVP_U_LINEAR_MACROS_INCLUDED
 

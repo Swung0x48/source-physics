@@ -19,6 +19,7 @@
 #include <ivu_x87.hxx>
 #endif
 #include <ivu_min_hash.hxx>
+#include <ivu_libm.hxx>
 
 IVP_DOUBLE IVP_Calc_Next_PSI_Solver::get_longest_time_step_dependent_on_rot()
 {
