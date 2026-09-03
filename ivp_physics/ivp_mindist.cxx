@@ -2,6 +2,8 @@
 
 // IVP_EXPORT_PRIVATE
 
+#include <string.h>
+
 #include <ivp_performancecounter.hxx>
 #include <ivp_physics.hxx>
 
@@ -268,6 +270,20 @@ void IVP_Mindist_Manager::print_mindists()
     }
 }
 
+// BMMO (engine change #7): a total order of two objects that every process
+// simulating the same world computes alike: the nocoll group ident first (a
+// networked ball carries its player's group on every peer), the object name
+// as the tie-break.  Negative when a sorts before b.
+static int ivp_ball_pair_order(const IVP_Real_Object *a, const IVP_Real_Object *b)
+{
+    int order = strcmp(a->nocoll_group_ident, b->nocoll_group_ident);
+    if (order != 0)
+        return order;
+    const char *name_a = a->get_name() ? a->get_name() : "";
+    const char *name_b = b->get_name() ? b->get_name() : "";
+    return strcmp(name_a, name_b);
+}
+
 void IVP_Mindist::init_mindist(IVP_Real_Object *pop0, IVP_Real_Object *pop1, const IVP_Compact_Edge *e0, const IVP_Compact_Edge *e1)
 {
     IVP_Synapse_Real *syn0 = this->get_synapse(0);
@@ -282,7 +298,15 @@ void IVP_Mindist::init_mindist(IVP_Real_Object *pop0, IVP_Real_Object *pop1, con
     case IVP_BALL:
         if (pop0->get_type() == IVP_BALL)
         {
-            if (pop0->client_data < pop1->client_data)
+            // BMMO (engine change #7): two balls used to be ordered by the
+            // address of their client data, which decides the sign of the
+            // contact normal and the roles of the two cores in the impact
+            // and friction solve.  Two processes simulating the same pair
+            // (a networked game and its authoritative server) do not share
+            // heap addresses, so they could disagree from the first
+            // ball-ball contact on.  Order by the nocoll group ident, then
+            // by name: keys both processes give the same objects.
+            if (ivp_ball_pair_order(pop0, pop1) < 0)
             {
                 IVP_Synapse_Real *synh;
                 synh = syn0;
