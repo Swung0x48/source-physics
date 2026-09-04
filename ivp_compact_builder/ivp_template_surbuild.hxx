@@ -65,11 +65,16 @@ public:
         build_root_convex_hull = IVP_FALSE;
         link_to_input_compact_ledges = IVP_FALSE;
         free_input_compact_ledges = IVP_TRUE;
-#ifdef WIN32
+        // BMMO engine change #12.  This was IVP_SLMP_MERGE_AND_REALLOCATE
+        // under WIN32 and IVP_SLMP_NO_MERGE everywhere else, so a hull
+        // compiled off Windows kept one copy of every point per ledge where
+        // the retail engine keeps one shared, merged array.  The hull is the
+        // same solid either way - mass centre, rotation inertia and radius
+        // come out bit-identical - but the compact surface it is stored in
+        // has a different size and different contents, and the two forms do
+        // not answer pointer identity of a shared vertex the same way.  The
+        // game runs the merging one; every platform now does.
         merge_points = IVP_SLMP_MERGE_AND_REALLOCATE;
-#else
-        merge_points = IVP_SLMP_NO_MERGE;
-#endif
     };
 };
 
