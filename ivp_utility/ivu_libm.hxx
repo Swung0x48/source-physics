@@ -8,7 +8,7 @@
 // own polynomials and tables, and the results differ in the last bits.
 //
 // All such calls in the physics therefore go through the ivp_libm namespace.
-// By default the functions forward to the C library.  When IVP_PORTABLE_LIBM
+// By default the functions forward to the C library.  When IVP_PORTABLE_BMMO
 // is defined, the build must provide the ivp_libm_* symbols declared below
 // (a correctly rounded or otherwise platform-independent implementation),
 // and every platform then computes bit-identical results.
@@ -23,7 +23,7 @@
 
 #include <math.h>
 
-#ifdef IVP_PORTABLE_LIBM
+#ifdef IVP_PORTABLE_BMMO
 extern "C" {
 double ivp_libm_sin(double);
 double ivp_libm_cos(double);

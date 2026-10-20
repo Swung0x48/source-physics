@@ -270,6 +270,7 @@ void IVP_Mindist_Manager::print_mindists()
     }
 }
 
+#ifdef IVP_PORTABLE_BMMO
 // BMMO (engine change #7): a total order of two objects that every process
 // simulating the same world computes alike: the nocoll group ident first (a
 // networked ball carries its player's group on every peer), the object name
@@ -283,6 +284,7 @@ static int ivp_ball_pair_order(const IVP_Real_Object *a, const IVP_Real_Object *
     const char *name_b = b->get_name() ? b->get_name() : "";
     return strcmp(name_a, name_b);
 }
+#endif
 
 void IVP_Mindist::init_mindist(IVP_Real_Object *pop0, IVP_Real_Object *pop1, const IVP_Compact_Edge *e0, const IVP_Compact_Edge *e1)
 {
@@ -306,7 +308,11 @@ void IVP_Mindist::init_mindist(IVP_Real_Object *pop0, IVP_Real_Object *pop1, con
             // heap addresses, so they could disagree from the first
             // ball-ball contact on.  Order by the nocoll group ident, then
             // by name: keys both processes give the same objects.
+#ifdef IVP_PORTABLE_BMMO
             if (ivp_ball_pair_order(pop0, pop1) < 0)
+#else
+            if (pop0->client_data < pop1->client_data)
+#endif
             {
                 IVP_Synapse_Real *synh;
                 synh = syn0;

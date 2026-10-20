@@ -73,8 +73,13 @@ public:
         // come out bit-identical - but the compact surface it is stored in
         // has a different size and different contents, and the two forms do
         // not answer pointer identity of a shared vertex the same way.  The
-        // game runs the merging one; every platform now does.
+        // game runs the merging one; a BallanceMMO build (IVP_PORTABLE_BMMO)
+        // does on every platform.  Without the macro: the upstream choice.
+#if defined(IVP_PORTABLE_BMMO) || defined(WIN32)
         merge_points = IVP_SLMP_MERGE_AND_REALLOCATE;
+#else
+        merge_points = IVP_SLMP_NO_MERGE;
+#endif
     };
 };
 
