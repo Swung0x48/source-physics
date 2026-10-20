@@ -32,6 +32,7 @@ public:
     IVP_Vector_of_Cores_2 sim_unit_cores;
     IVP_U_Vector<IVP_Sim_Unit_Controller_Core_List> controller_cores;
 
+#ifdef IVP_PORTABLE_BMMO
     // BallanceMMO engine change #5: the movement (freeze) check runs on a
     // per-unit countdown instead of the environment's single counter, which
     // was decremented by every simulated unit and re-armed with ivp_rand().
@@ -53,6 +54,7 @@ public:
         }
         return IVP_FALSE;
     }
+#endif
 
     IVP_Simulation_Unit();
     ~IVP_Simulation_Unit();
