@@ -183,7 +183,19 @@ IVP_BOOL IVP_OV_Tree_Manager::box_contains_box(const struct IVP_OV_Node_Data *ma
 
     return (IVP_TRUE);
 }
-#if !defined(LINUX) && !(__MWERKS__ && __POWERPC__) && !defined(GEKKO)
+// BMMO engine change #16: one rounding on every platform.  The original
+// floored a float here on Windows and a double on Linux (the #else branch kept
+// floor()/ceil() for LINUX, __MWERKS__/__POWERPC__ and GEKKO).  The two differ
+// whenever the double is within half a float ulp of an integer, which happens
+// for a box edge landing on a grid line, and the box an object is filed under
+// decides the order its collision partners are found in - and with it, for
+// two partners at the same distance, the order their contacts are created and
+// solved in.  A Linux server and a Windows client disagreed on exactly that
+// when four balls were recreated in one tick at symmetric spacing: identical
+// state up to the tick, contacts created in opposite orders, quaternions apart
+// by 1e-9 from then on (BallanceMMO docs/lockstep-without-snapshots.md, "the
+// 701 hash artefact").  The Windows retail game is the reference, so the
+// float variant is the one every platform keeps.
 inline int ivp_int_floor(IVP_DOUBLE x)
 {
     return (int)floorf(x);
@@ -192,16 +204,6 @@ inline int ivp_int_ceil(IVP_DOUBLE x)
 {
     return (int)ceilf(x);
 }
-#else
-inline int ivp_int_floor(IVP_DOUBLE x)
-{
-    return (int)floor(x);
-}
-inline int ivp_int_ceil(IVP_DOUBLE x)
-{
-    return (int)ceil(x);
-}
-#endif
 
 IVP_DOUBLE IVP_OV_Tree_Manager::calc_optimal_box(const IVP_OV_Element *element, IVP_DOUBLE min_radius, IVP_DOUBLE max_radius)
 {
