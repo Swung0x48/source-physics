@@ -19,6 +19,9 @@ public:
 //                             and in sim_unit_revive_for_simulation
 class IVP_Simulation_Unit
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
     IVP_Movement_Type sim_unit_movement_type : 8;
 
 public:

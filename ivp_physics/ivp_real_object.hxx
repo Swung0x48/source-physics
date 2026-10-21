@@ -81,6 +81,9 @@ public:
 
 class IVP_Hull_Manager_Base : protected IVP_Hull_Manager_Base_Gradient
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
 protected:
     // Manages a sorted event list of synapses for one Real_Object **/
     IVP_U_Min_List sorted_synapses;
@@ -149,6 +152,9 @@ public:
 
 class IVP_Real_Object : public IVP_Real_Object_Fast
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
 
     friend class IVP_Anchor;
     friend class IVP_Core;

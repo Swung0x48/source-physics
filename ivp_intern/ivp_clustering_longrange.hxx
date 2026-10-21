@@ -50,6 +50,9 @@ struct IVP_OV_Node_Data
 
 class IVP_OV_Node
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
     friend class IVP_OV_Tree_Manager;
     ~IVP_OV_Node();
 
@@ -71,6 +74,9 @@ class IVP_ov_tree_hash;
  ********************************************************************************/
 class IVP_OV_Tree_Manager
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
     friend class IVP_Ray_Solver;
     friend class IVP_Ray_Solver_Group;
     friend class IVP_Sphere_Solver;
