@@ -39,6 +39,9 @@ public:
     virtual void hull_manager_is_reset(IVP_FLOAT dt, IVP_FLOAT center_dt); // hull_manager is reset
 private:
     friend class IVP_Hull_Manager;
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
     unsigned int minlist_index;
 };
 

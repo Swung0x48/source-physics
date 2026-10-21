@@ -114,6 +114,9 @@ public:
 
 class IVP_Synapse_Friction
 { // sizeof() == 32
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
 public:
     IVP_Synapse_Friction *next, *prev; // per object list
     IVP_Real_Object *l_obj;            // back link to object
@@ -154,6 +157,9 @@ public:
 // fast static area
 class IVP_Contact_Point_Fast_Static
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
 protected:
     IVP_Contact_Point *next_dist_in_friction; // all friction springs in a friction system
     IVP_Contact_Point *prev_dist_in_friction;
@@ -176,6 +182,9 @@ enum IVP_CONTACT_POINT_BREAK_STATUS
 // add fast dynamics
 class IVP_Contact_Point_Fast : public IVP_Contact_Point_Fast_Static
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
 protected:
 #ifdef IVP_USE_S_VALS_FOR_PRETENSION
     IVP_FLOAT s_coords[2]; //
@@ -205,6 +214,9 @@ protected:
 
 class IVP_Contact_Point : public IVP_Contact_Point_Fast
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
     friend class IVP_Real_Object;
     friend class IVP_Core;
     friend class IVP_Friction_Solver;
@@ -285,6 +297,9 @@ public:
 // used for union find and easing of friction forces
 class IVP_Friction_Core_Pair
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
     friend class IVP_Friction_System;
     friend class IVP_Friction_Sys_Static;
     friend class IVP_Impact_System;
@@ -365,6 +380,9 @@ public:
 
 class IVP_Friction_System : public IVP_Controller_Dependent
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
     friend class IVP_Friction_Core_Pair;
     friend class IVP_Friction_Solver;
     friend class IVP_Friction_Hash;

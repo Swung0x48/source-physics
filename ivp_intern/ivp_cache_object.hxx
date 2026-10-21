@@ -14,6 +14,9 @@
 
 class IVP_Cache_Object
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
     friend class IVP_Real_Object;
     friend class IVP_Cache_Object_Manager;
     friend class IVP_U_Matrix_Cache;
@@ -45,6 +48,9 @@ public:
 
 class IVP_Cache_Object_Manager
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
     int n_cache_objects;
     int reuse_loop_index;       // rotates through the array
     char *cache_objects_buffer; // IVP_Cache_Object

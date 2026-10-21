@@ -180,6 +180,9 @@ class IVP_OO_Watcher;
  ********************************************************************************/
 class IVP_Synapse_OO : public IVP_Listener_Hull
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17, see IVP_Mindist_Base
+#endif
     friend class IVP_OO_Watcher;
     IVP_Real_Object *object;
     IVP_OO_Watcher *watcher;
@@ -202,6 +205,9 @@ class IVP_Synapse_OO : public IVP_Listener_Hull
  ********************************************************************************/
 class IVP_OO_Watcher : public IVP_Collision, public IVP_Collision_Delegator
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17, see IVP_Mindist_Base
+#endif
     IVP_Synapse_OO synapses[2];
     IVP_U_FVector<IVP_Collision> mindists;
 
@@ -235,6 +241,9 @@ class IVP_OO_Watcher : public IVP_Collision, public IVP_Collision_Delegator
  ********************************************************************************/
 class IVP_Synapse_Real : public IVP_Synapse
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17, see IVP_Mindist_Base
+#endif
   protected:
     friend class IVP_Mindist;
     friend class IVP_Mindist_Base;
@@ -342,6 +351,15 @@ enum IVP_MINDIST_FUNCTION
 
 class IVP_Mindist_Base : public IVP_Collision
 {
+#ifdef IVP_PORTABLE_BMMO
+    // BallanceMMO engine change #17 (access only): the rollback's savestate
+    // records a mindist's whole state and rebuilds it at an anchor.  coll_type
+    // and synapse_sort_flag are protected bitfields, which no pointer to
+    // member can reach; the friend lives in the BallanceMMO bridge
+    // (BallanceMMOCommon/src/physics/physics_savestate_internal.hpp) and
+    // changes nothing IVP does.
+    friend class IVP_BMMO_State;
+#endif
   protected:
     IVP_COLL_TYPE coll_type : 8;
     unsigned int synapse_sort_flag : 2;
@@ -408,6 +426,9 @@ enum IVP_MINDIST_EVENT_HINT
 
 class IVP_Mindist : public IVP_Mindist_Base
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17, see IVP_Mindist_Base
+#endif
     friend class IVP_Mindist_Manager;
     friend class IVP_Contact_Point;
     friend class IVP_Mindist_Event_Solver;

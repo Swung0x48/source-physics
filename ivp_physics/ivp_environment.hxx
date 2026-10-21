@@ -138,6 +138,9 @@ class IVP_Hull_Manager_Base;
  ********************************************************************************/
 class IVP_Environment
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
     friend class IVP_Simulation_Unit;
     friend class IVP_Friction_System;
     friend class IVP_Friction_Sys_Static;

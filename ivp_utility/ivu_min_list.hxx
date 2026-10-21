@@ -31,6 +31,9 @@ class IVP_U_Min_List_Element
 
 class IVP_U_Min_List
 {
+#ifdef IVP_PORTABLE_BMMO
+    friend class IVP_BMMO_State;   // engine change #17 (access only), see ivp_mindist.hxx IVP_Mindist_Base
+#endif
     friend class IVP_U_Min_List_Enumerator;
     unsigned short malloced_size;
     unsigned short free_list;
