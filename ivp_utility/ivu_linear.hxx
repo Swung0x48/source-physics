@@ -9,7 +9,8 @@
 #include <string.h>
 
 #include <ivu_types.hxx>
-#if IVP_ENABLE_X87_EMULATION
+#include <ivu_x87_config.hxx>
+#if IVP_ENABLE_X87_EMULATION || IVP_X87_ARITHMETIC_TRANSCENDENTAL != IVP_X87_OFF
 #include <ivu_x87.hxx>
 #endif
 
@@ -441,7 +442,7 @@ public:
     {
         return sqrt(f);
     };
-#if IVP_ENABLE_X87_EMULATION
+#if IVP_X87_ARITHMETIC_TRANSCENDENTAL != IVP_X87_OFF
     // Retail inlines fsin, fcos, fpatan and the f2xm1/fscale exponential, and
     // calls the C runtime's x87 asin and acos; no host library is involved.
     static IVP_DOUBLE ivp_sinf(IVP_DOUBLE f)

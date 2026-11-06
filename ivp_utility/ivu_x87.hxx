@@ -2,6 +2,7 @@
 #define IVP_U_X87_INCLUDED
 
 #include <stdint.h>
+#include <ivu_x87_config.hxx>
 
 class IVP_X87_Arithmetic;
 struct IVP_X87_Control;
@@ -28,6 +29,9 @@ public:
 };
 
 #include <ivu_x87_fast.hxx>
+#if (IVP_X87_ARITHMETIC == IVP_X87_HARD || IVP_X87_ARITHMETIC_TRANSCENDENTAL == IVP_X87_HARD)
+#include <ivu_x87_native.hxx>
+#endif
 
 // Each numerical kernel has explicit precision, rounding and exception status.
 // Its storage is fixed; constructing or operating on it never allocates.
@@ -43,6 +47,10 @@ class IVP_X87_Arithmetic
     // merged into the exception flags.
     bool fast_path;
     bool fast_inexact;
+    // HARD selections: fast_path while the executing FPU also uses 64-bit
+    // precision and nearest rounding. Those operations then run on the host
+    // x87 and raise its exceptions, not the object's.
+    bool native_path;
 
     IVP_X87_Arithmetic(const IVP_X87_Arithmetic &);
     IVP_X87_Arithmetic &operator=(const IVP_X87_Arithmetic &);
@@ -83,12 +91,18 @@ public:
 
     IVP_U_Float80 load(float value)
     {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+        if(native_path) return ivp_x87_native_load_float(value);
+#endif
         IVP_U_Float80 result;
         if(fast_path && ivp_x87_fast_load_float(value, &result)) return result;
         return load_general(value);
     }
     IVP_U_Float80 load(double value)
     {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+        if(native_path) return ivp_x87_native_load_double(value);
+#endif
         IVP_U_Float80 result;
         if(fast_path && ivp_x87_fast_load_double(value, &result)) return result;
         return load_general(value);
@@ -96,12 +110,18 @@ public:
     IVP_U_Float80 load(int32_t value);
     float store_float(const IVP_U_Float80 &value)
     {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+        if(native_path) return ivp_x87_native_store_float(value);
+#endif
         float result;
         if(fast_path && ivp_x87_fast_store_float(value, &result, &fast_inexact)) return result;
         return store_float_general(value);
     }
     double store_double(const IVP_U_Float80 &value)
     {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+        if(native_path) return ivp_x87_native_store_double(value);
+#endif
         double result;
         if(fast_path && ivp_x87_fast_store_double(value, &result, &fast_inexact)) return result;
         return store_double_general(value);
@@ -113,24 +133,36 @@ public:
 
     IVP_U_Float80 add(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
     {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+        if(native_path) return ivp_x87_native_add(first, second);
+#endif
         IVP_U_Float80 result;
         if(fast_path && ivp_x87_fast_add(first, second, 0, &result, &fast_inexact)) return result;
         return add_general(first, second);
     }
     IVP_U_Float80 subtract(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
     {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+        if(native_path) return ivp_x87_native_subtract(first, second);
+#endif
         IVP_U_Float80 result;
         if(fast_path && ivp_x87_fast_add(first, second, 1, &result, &fast_inexact)) return result;
         return subtract_general(first, second);
     }
     IVP_U_Float80 multiply(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
     {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+        if(native_path) return ivp_x87_native_multiply(first, second);
+#endif
         IVP_U_Float80 result;
         if(fast_path && ivp_x87_fast_multiply(first, second, &result, &fast_inexact)) return result;
         return multiply_general(first, second);
     }
     IVP_U_Float80 divide(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
     {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+        if(native_path) return ivp_x87_native_divide(first, second);
+#endif
         IVP_U_Float80 result;
         if(fast_path && ivp_x87_fast_divide(first, second, &result, &fast_inexact)) return result;
         return divide_general(first, second);

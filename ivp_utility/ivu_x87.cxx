@@ -105,7 +105,7 @@ void IVP_U_Float80::to_bytes(unsigned char *bytes) const
 }
 
 IVP_X87_Arithmetic::IVP_X87_Arithmetic(Precision precision, Rounding rounding)
-    : fast_path(false), fast_inexact(false)
+    : fast_path(false), fast_inexact(false), native_path(false)
 {
     softfloat_status_t *status = new(get_status()) softfloat_status_t();
     status->softfloat_exceptionMasks = softfloat_all_exceptions_mask;
@@ -139,6 +139,16 @@ void IVP_X87_Arithmetic::update_fast_path()
     const softfloat_status_t *status = static_cast<const softfloat_status_t *>(get_status());
     fast_path = status->extF80_roundingPrecision == 80
         && status->softfloat_roundingMode == softfloat_round_near_even;
+#if (IVP_X87_ARITHMETIC == IVP_X87_HARD || IVP_X87_ARITHMETIC_TRANSCENDENTAL == IVP_X87_HARD)
+    // The host evaluates with its own control word: use it only when it agrees.
+    unsigned short control;
+#if defined(_MSC_VER)
+    __asm fnstcw control
+#else
+    __asm__ __volatile__("fnstcw %0" : "=m"(control));
+#endif
+    native_path = fast_path && (control & 0x0f00) == 0x0300; // PC = 64-bit, RC = nearest
+#endif
 }
 
 unsigned IVP_X87_Arithmetic::get_exception_flags() const
@@ -258,6 +268,9 @@ IVP_U_Float80 IVP_X87_Arithmetic::divide_general(const IVP_U_Float80 &first, con
 
 IVP_U_Float80 IVP_X87_Arithmetic::square_root(const IVP_U_Float80 &value)
 {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+    if(native_path) return ivp_x87_native_square_root(value);
+#endif
     return ivp_x87_output(extF80_sqrt(ivp_x87_input(value), static_cast<softfloat_status_t *>(get_status())));
 }
 
@@ -280,6 +293,13 @@ IVP_X87_Arithmetic::Relation IVP_X87_Arithmetic::compare(
 
 IVP_U_Float80 IVP_X87_Arithmetic::sine(const IVP_U_Float80 &value, bool *out_of_range)
 {
+#if IVP_X87_ARITHMETIC_TRANSCENDENTAL == IVP_X87_HARD
+    if(native_path)
+    {
+        if(out_of_range) *out_of_range = (value.get_sign_exponent() & 0x7fff) >= 0x3fff + 63;
+        return ivp_x87_native_sine(value);
+    }
+#endif
     extFloat80_t result = ivp_x87_input(value);
     const int range = fsin(result, *static_cast<softfloat_status_t *>(get_status()));
     if(out_of_range) *out_of_range = range != 0;
@@ -288,6 +308,13 @@ IVP_U_Float80 IVP_X87_Arithmetic::sine(const IVP_U_Float80 &value, bool *out_of_
 
 IVP_U_Float80 IVP_X87_Arithmetic::cosine(const IVP_U_Float80 &value, bool *out_of_range)
 {
+#if IVP_X87_ARITHMETIC_TRANSCENDENTAL == IVP_X87_HARD
+    if(native_path)
+    {
+        if(out_of_range) *out_of_range = (value.get_sign_exponent() & 0x7fff) >= 0x3fff + 63;
+        return ivp_x87_native_cosine(value);
+    }
+#endif
     extFloat80_t result = ivp_x87_input(value);
     const int range = fcos(result, *static_cast<softfloat_status_t *>(get_status()));
     if(out_of_range) *out_of_range = range != 0;
@@ -296,6 +323,9 @@ IVP_U_Float80 IVP_X87_Arithmetic::cosine(const IVP_U_Float80 &value, bool *out_o
 
 IVP_U_Float80 IVP_X87_Arithmetic::arctangent(const IVP_U_Float80 &y, const IVP_U_Float80 &x)
 {
+#if IVP_X87_ARITHMETIC_TRANSCENDENTAL == IVP_X87_HARD
+    if(native_path) return ivp_x87_native_arctangent(y, x);
+#endif
     return ivp_x87_output(fpatan(ivp_x87_input(x), ivp_x87_input(y),
         *static_cast<softfloat_status_t *>(get_status())));
 }
@@ -382,22 +412,34 @@ IVP_U_Float80 IVP_X87_Arithmetic::arccosine(const IVP_U_Float80 &value)
 
 IVP_U_Float80 IVP_X87_Arithmetic::power2_minus1(const IVP_U_Float80 &value)
 {
+#if IVP_X87_ARITHMETIC_TRANSCENDENTAL == IVP_X87_HARD
+    if(native_path) return ivp_x87_native_power2_minus1(value);
+#endif
     return ivp_x87_output(f2xm1(ivp_x87_input(value), *static_cast<softfloat_status_t *>(get_status())));
 }
 
 IVP_U_Float80 IVP_X87_Arithmetic::log2_multiply(const IVP_U_Float80 &x, const IVP_U_Float80 &y)
 {
+#if IVP_X87_ARITHMETIC_TRANSCENDENTAL == IVP_X87_HARD
+    if(native_path) return ivp_x87_native_log2_multiply(x, y);
+#endif
     return ivp_x87_output(fyl2x(ivp_x87_input(x), ivp_x87_input(y),
         *static_cast<softfloat_status_t *>(get_status())));
 }
 
 IVP_U_Float80 IVP_X87_Arithmetic::round_integer(const IVP_U_Float80 &value)
 {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+    if(native_path) return ivp_x87_native_round_integer(value);
+#endif
     return ivp_x87_output(extF80_roundToInt(ivp_x87_input(value), static_cast<softfloat_status_t *>(get_status())));
 }
 
 IVP_U_Float80 IVP_X87_Arithmetic::scale(const IVP_U_Float80 &value, const IVP_U_Float80 &exponent)
 {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+    if(native_path) return ivp_x87_native_scale(value, exponent);
+#endif
     return ivp_x87_output(extF80_scale(ivp_x87_input(value), ivp_x87_input(exponent),
         static_cast<softfloat_status_t *>(get_status())));
 }
