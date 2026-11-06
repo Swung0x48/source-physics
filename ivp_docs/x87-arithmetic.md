@@ -33,6 +33,13 @@ status. Operations allocate no memory. `load` converts an input exactly;
 Keep a register-width intermediate as `IVP_U_Float80` when a later comparison or
 operation uses it. Return it explicitly across internal numerical calls.
 
+With 64-bit precision and nearest-even rounding, `load`, `store_float`,
+`store_double`, `add`, `subtract`, `multiply` and `divide` evaluate normal and
+zero operands inline with integer arithmetic (`ivu_x87_fast.hxx`) when the
+result is normal or zero. Every other case, precision and rounding uses the
+SoftFloat implementation. Both paths produce the same values and exception
+flags; `tests/numerics/x87_fast_path_test.cxx` compares them.
+
 `IVP_X87_Control` supplies thread-local precision and rounding. Explicit control
 works on every supported target. On 32-bit MSVC, the native control word remains
 authoritative, including changes made by surrounding callers; other targets

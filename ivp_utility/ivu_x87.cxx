@@ -87,16 +87,6 @@ static IVP_U_Float80 ivp_x87_output(extFloat80_t value)
     return IVP_U_Float80::from_bits(value.signExp, value.signif);
 }
 
-IVP_U_Float80::IVP_U_Float80() : significand(0), sign_exponent(0) {}
-
-IVP_U_Float80 IVP_U_Float80::from_bits(uint16_t exponent, uint64_t fraction)
-{
-    IVP_U_Float80 result;
-    result.sign_exponent = exponent;
-    result.significand = fraction;
-    return result;
-}
-
 IVP_U_Float80 IVP_U_Float80::from_bytes(const unsigned char *bytes)
 {
     uint64_t fraction = 0;
@@ -115,6 +105,7 @@ void IVP_U_Float80::to_bytes(unsigned char *bytes) const
 }
 
 IVP_X87_Arithmetic::IVP_X87_Arithmetic(Precision precision, Rounding rounding)
+    : fast_path(false), fast_inexact(false)
 {
     softfloat_status_t *status = new(get_status()) softfloat_status_t();
     status->softfloat_exceptionMasks = softfloat_all_exceptions_mask;
@@ -132,6 +123,7 @@ void IVP_X87_Arithmetic::set_precision(Precision precision)
     assert(precision == PRECISION_24 || precision == PRECISION_53 || precision == PRECISION_64);
     static_cast<softfloat_status_t *>(get_status())->extF80_roundingPrecision =
         precision == PRECISION_24 ? 32 : precision == PRECISION_53 ? 64 : 80;
+    update_fast_path();
 }
 
 void IVP_X87_Arithmetic::set_rounding(Rounding rounding)
@@ -139,26 +131,36 @@ void IVP_X87_Arithmetic::set_rounding(Rounding rounding)
     assert(rounding >= ROUND_NEAREST && rounding <= ROUND_TO_ZERO);
     static_cast<softfloat_status_t *>(get_status())->softfloat_roundingMode =
         static_cast<uint8_t>(rounding);
+    update_fast_path();
+}
+
+void IVP_X87_Arithmetic::update_fast_path()
+{
+    const softfloat_status_t *status = static_cast<const softfloat_status_t *>(get_status());
+    fast_path = status->extF80_roundingPrecision == 80
+        && status->softfloat_roundingMode == softfloat_round_near_even;
 }
 
 unsigned IVP_X87_Arithmetic::get_exception_flags() const
 {
-    return static_cast<unsigned>(static_cast<const softfloat_status_t *>(get_status())->softfloat_exceptionFlags) & 0x3f;
+    return (static_cast<unsigned>(static_cast<const softfloat_status_t *>(get_status())->softfloat_exceptionFlags) & 0x3f)
+        | (fast_inexact ? static_cast<unsigned>(EXCEPTION_INEXACT_RESULT) : 0u);
 }
 
 void IVP_X87_Arithmetic::clear_exception_flags()
 {
     static_cast<softfloat_status_t *>(get_status())->softfloat_exceptionFlags = 0;
+    fast_inexact = false;
 }
 
-IVP_U_Float80 IVP_X87_Arithmetic::load(float value)
+IVP_U_Float80 IVP_X87_Arithmetic::load_general(float value)
 {
     uint32_t bits;
     memcpy(&bits, &value, sizeof(bits));
     return ivp_x87_output(f32_to_extF80(bits, static_cast<softfloat_status_t *>(get_status())));
 }
 
-IVP_U_Float80 IVP_X87_Arithmetic::load(double value)
+IVP_U_Float80 IVP_X87_Arithmetic::load_general(double value)
 {
     uint64_t bits;
     memcpy(&bits, &value, sizeof(bits));
@@ -170,7 +172,7 @@ IVP_U_Float80 IVP_X87_Arithmetic::load(int32_t value)
     return ivp_x87_output(i32_to_extF80(value));
 }
 
-float IVP_X87_Arithmetic::store_float(const IVP_U_Float80 &value)
+float IVP_X87_Arithmetic::store_float_general(const IVP_U_Float80 &value)
 {
     const uint32_t bits = extF80_to_f32(ivp_x87_input(value), static_cast<softfloat_status_t *>(get_status()));
     float result;
@@ -178,7 +180,7 @@ float IVP_X87_Arithmetic::store_float(const IVP_U_Float80 &value)
     return result;
 }
 
-double IVP_X87_Arithmetic::store_double(const IVP_U_Float80 &value)
+double IVP_X87_Arithmetic::store_double_general(const IVP_U_Float80 &value)
 {
     const uint64_t bits = extF80_to_f64(ivp_x87_input(value), static_cast<softfloat_status_t *>(get_status()));
     double result;
@@ -230,25 +232,25 @@ float IVP_X87_Arithmetic::return_float(const IVP_U_Float80 &value)
 #endif
 }
 
-IVP_U_Float80 IVP_X87_Arithmetic::add(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+IVP_U_Float80 IVP_X87_Arithmetic::add_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
 {
     return ivp_x87_output(extF80_add(ivp_x87_input(first), ivp_x87_input(second),
         static_cast<softfloat_status_t *>(get_status())));
 }
 
-IVP_U_Float80 IVP_X87_Arithmetic::subtract(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+IVP_U_Float80 IVP_X87_Arithmetic::subtract_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
 {
     return ivp_x87_output(extF80_sub(ivp_x87_input(first), ivp_x87_input(second),
         static_cast<softfloat_status_t *>(get_status())));
 }
 
-IVP_U_Float80 IVP_X87_Arithmetic::multiply(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+IVP_U_Float80 IVP_X87_Arithmetic::multiply_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
 {
     return ivp_x87_output(extF80_mul(ivp_x87_input(first), ivp_x87_input(second),
         static_cast<softfloat_status_t *>(get_status())));
 }
 
-IVP_U_Float80 IVP_X87_Arithmetic::divide(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+IVP_U_Float80 IVP_X87_Arithmetic::divide_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
 {
     return ivp_x87_output(extF80_div(ivp_x87_input(first), ivp_x87_input(second),
         static_cast<softfloat_status_t *>(get_status())));
