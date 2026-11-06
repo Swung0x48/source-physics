@@ -30,11 +30,13 @@ static int ivp_check_x87_precision()
     const IVP_U_Float80 rounded = single.add(one, increment);
     failures += rounded.get_significand() != UINT64_C(0x8000010000000000);
     failures += !ivp_float80_equal(fp.add(one, increment), live_sum);
+#if IVP_X87_ARITHMETIC != IVP_X87_HARD // host x87 operations raise the host's exceptions
     fp.divide(one, zero);
     failures += (fp.get_exception_flags() & IVP_X87_Arithmetic::EXCEPTION_DIVISION_BY_ZERO) == 0;
     failures += (single.get_exception_flags() & IVP_X87_Arithmetic::EXCEPTION_DIVISION_BY_ZERO) != 0;
     fp.clear_exception_flags();
     failures += fp.get_exception_flags() != 0;
+#endif
 
     bool outside = true;
     failures += !ivp_float80_equal(fp.sine(zero, &outside), zero) || outside;
@@ -51,6 +53,7 @@ static int ivp_check_x87_precision()
     failures += fp.compare(two, one) != IVP_X87_Arithmetic::GREATER;
     failures += fp.compare(one, one) != IVP_X87_Arithmetic::EQUAL;
 
+#if IVP_X87_ARITHMETIC_TRANSCENDENTAL != IVP_X87_HARD // host fpatan's last bit depends on the processor vendor
     // asin/acos as msvcrt.dll's _CIasin/_CIacos return them: rounded to
     // binary64 under 64-bit precision, the register value under 53-bit.
     struct UnitCase { double x; uint16_t asin_se[2]; uint64_t asin_sig[2]; uint16_t acos_se[2]; uint64_t acos_sig[2]; };
@@ -80,6 +83,7 @@ static int ivp_check_x87_precision()
         }
     }
     failures += !ivp_float80_equal(extended.arcsine(two), IVP_U_Float80::from_bits(0xffff, UINT64_C(0xc000000000000000)));
+#endif
 
     const IVP_X87_Control control =
         {IVP_X87_Arithmetic::PRECISION_24, IVP_X87_Arithmetic::ROUND_UP};

@@ -8,6 +8,14 @@
 #include <cstdlib>
 #include <cstring>
 
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+// The host x87 raises its own exceptions, not the object's: compare values.
+#define IVP_FLAGS_MATCH(fp, status) true
+#else
+#define IVP_FLAGS_MATCH(fp, status) \
+    ((fp).get_exception_flags() == (static_cast<unsigned>((status).softfloat_exceptionFlags) & 0x3f))
+#endif
+
 namespace
 {
 uint64_t state = 0x9e3779b97f4a7c15ull;
@@ -110,6 +118,11 @@ void check(bool ok, const char *operation, const IVP_U_Float80 &a, const IVP_U_F
 int main(int argc, char **argv)
 {
     const int cases = argc > 1 ? std::atoi(argv[1]) : 400000;
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+    // The host path needs the executing FPU at the same selection.
+    const IVP_X87_Control control = {IVP_X87_Arithmetic::PRECISION_64, IVP_X87_Arithmetic::ROUND_NEAREST};
+    IVP_X87_Control::set(control);
+#endif
     IVP_X87_Arithmetic fp(IVP_X87_Arithmetic::PRECISION_64, IVP_X87_Arithmetic::ROUND_NEAREST);
     for(int i = 0; i < cases; ++i)
     {
@@ -121,7 +134,7 @@ int main(int argc, char **argv)
         status = reference_status();                                                                 \
         fp.clear_exception_flags();                                                                  \
         check(same(fp.CALL(a, b), REFERENCE(raw(a), raw(b), &status))                                \
-            && fp.get_exception_flags() == (static_cast<unsigned>(status.softfloat_exceptionFlags) & 0x3f), \
+            && IVP_FLAGS_MATCH(fp, status), \
             NAME, a, b);
         IVP_CHECK_BINARY("add", add, extF80_add)
         IVP_CHECK_BINARY("subtract", subtract, extF80_sub)
@@ -136,7 +149,7 @@ int main(int argc, char **argv)
         uint32_t narrow_bits;
         memcpy(&narrow_bits, &narrow, sizeof(narrow_bits));
         check(narrow_bits == narrow_expected
-            && fp.get_exception_flags() == (static_cast<unsigned>(status.softfloat_exceptionFlags) & 0x3f),
+            && IVP_FLAGS_MATCH(fp, status),
             "store_float", a, a);
 
         status = reference_status();
@@ -146,7 +159,7 @@ int main(int argc, char **argv)
         uint64_t wide_bits;
         memcpy(&wide_bits, &wide, sizeof(wide_bits));
         check(wide_bits == wide_expected
-            && fp.get_exception_flags() == (static_cast<unsigned>(status.softfloat_exceptionFlags) & 0x3f),
+            && IVP_FLAGS_MATCH(fp, status),
             "store_double", a, a);
 
         const uint32_t single_bits = static_cast<uint32_t>(next());
@@ -155,7 +168,7 @@ int main(int argc, char **argv)
         status = reference_status();
         fp.clear_exception_flags();
         check(same(fp.load(single), f32_to_extF80(single_bits, &status))
-            && fp.get_exception_flags() == (static_cast<unsigned>(status.softfloat_exceptionFlags) & 0x3f),
+            && IVP_FLAGS_MATCH(fp, status),
             "load(float)", a, a);
 
         const uint64_t double_bits = next();
@@ -164,7 +177,7 @@ int main(int argc, char **argv)
         status = reference_status();
         fp.clear_exception_flags();
         check(same(fp.load(value), f64_to_extF80(double_bits, &status))
-            && fp.get_exception_flags() == (static_cast<unsigned>(status.softfloat_exceptionFlags) & 0x3f),
+            && IVP_FLAGS_MATCH(fp, status),
             "load(double)", a, a);
     }
 
