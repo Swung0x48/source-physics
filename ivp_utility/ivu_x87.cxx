@@ -7,14 +7,20 @@
 #include <new>
 #include <string.h>
 
-// 32-bit MSVC code compiled for the x87 (/arch:IA32, _M_IX86_FP == 0) shares
-// the native control word with the surrounding expressions and returns scalars
-// through ST0. An SSE2 build (_M_IX86_FP 2) behaves like every other target.
+// 32-bit MSVC code compiled for the x87 (/arch:IA32) shares the native control
+// word with the surrounding expressions and returns scalars through ST0. An
+// SSE2 build behaves like every other target. The build passes the choice
+// (IVP_X87_MSVC_IA32): this file is compiled for the toolchain's default
+// either way, so its own _M_IX86_FP does not tell how the rest of IVP runs.
+#ifndef IVP_X87_NATIVE_ABI
 #if defined(_MSC_VER) && defined(_M_IX86) && defined(_M_IX86_FP) && _M_IX86_FP == 0
 #define IVP_X87_NATIVE_ABI 1
-#include <float.h>
 #else
 #define IVP_X87_NATIVE_ABI 0
+#endif
+#endif
+#if IVP_X87_NATIVE_ABI
+#include <float.h>
 #endif
 
 typedef char IVP_X87_Status_Size_Check[sizeof(softfloat_status_t) <= 16 ? 1 : -1];

@@ -28,6 +28,15 @@ function(ivp_configure_x87_arithmetic target)
         IVP_ENABLE_X87_EMULATION=$<BOOL:${IVP_ENABLE_X87_EMULATION}>
         IVP_X87_ARITHMETIC=${IVP_X87_ARITHMETIC_VALUE}
         IVP_X87_ARITHMETIC_TRANSCENDENTAL=${IVP_X87_ARITHMETIC_TRANSCENDENTAL_VALUE})
+    # The native ABI (control-word synchronisation, ST0 returns) follows how the
+    # rest of IVP is compiled, not this target's own flags.
+    if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4 AND DEFINED IVP_X87_MSVC_IA32)
+        if(IVP_ENABLE_X87_EMULATION AND IVP_X87_MSVC_IA32)
+            target_compile_definitions(${target} PRIVATE IVP_X87_NATIVE_ABI=1)
+        else()
+            target_compile_definitions(${target} PRIVATE IVP_X87_NATIVE_ABI=0)
+        endif()
+    endif()
     set_target_properties(${target} PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         CXX_VISIBILITY_PRESET hidden
