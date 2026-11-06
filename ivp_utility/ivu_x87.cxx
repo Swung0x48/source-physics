@@ -300,6 +300,86 @@ IVP_U_Float80 IVP_X87_Arithmetic::arctangent(const IVP_U_Float80 &y, const IVP_U
         *static_cast<softfloat_status_t *>(get_status())));
 }
 
+// The runtime classifies the binary64 copy of its argument and evaluates the
+// extended argument itself. +-1 and the default NaN are its stored constants.
+enum IVP_X87_Domain { IVP_X87_INSIDE, IVP_X87_PLUS_ONE, IVP_X87_MINUS_ONE, IVP_X87_NAN, IVP_X87_OUTSIDE };
+
+static IVP_X87_Domain ivp_x87_unit_domain(IVP_X87_Arithmetic &fp, const IVP_U_Float80 &value)
+{
+    const double rounded = fp.store_double(value);
+    uint64_t bits;
+    memcpy(&bits, &rounded, sizeof(bits));
+    const unsigned exponent = static_cast<unsigned>(bits >> 52) & 0x7ff;
+    const uint64_t fraction = bits & UINT64_C(0xfffffffffffff);
+    if(exponent < 0x3ff) return IVP_X87_INSIDE;
+    if(exponent == 0x3ff && fraction == 0) return (bits >> 63) ? IVP_X87_MINUS_ONE : IVP_X87_PLUS_ONE;
+    if(exponent == 0x7ff && fraction != 0) return IVP_X87_NAN;
+    return IVP_X87_OUTSIDE;
+}
+
+static IVP_U_Float80 ivp_x87_unit_root(IVP_X87_Arithmetic &fp, const IVP_U_Float80 &value)
+{
+    const IVP_U_Float80 one = fp.load(1.0);
+    return fp.square_root(fp.multiply(fp.add(one, value), fp.subtract(one, value)));
+}
+
+static IVP_U_Float80 ivp_x87_quiet(const IVP_U_Float80 &value)
+{
+    return IVP_U_Float80::from_bits(value.get_sign_exponent(), value.get_significand() | (UINT64_C(1) << 62));
+}
+
+static const uint64_t ivp_x87_pi_significand = UINT64_C(0xc90fdaa22168c235);
+
+// The runtime evaluates with the caller's precision and nearest rounding. Unless
+// the caller's control word is the default (53-bit, nearest), its exit hands an
+// inexact result to the exception path, which stores and reloads it as
+// binary64; the precision flag is sticky, so a running program always takes it.
+static IVP_X87_Arithmetic::Precision ivp_x87_precision(const softfloat_status_t *status)
+{
+    return status->extF80_roundingPrecision == 32 ? IVP_X87_Arithmetic::PRECISION_24
+        : status->extF80_roundingPrecision == 64 ? IVP_X87_Arithmetic::PRECISION_53 : IVP_X87_Arithmetic::PRECISION_64;
+}
+
+static IVP_U_Float80 ivp_x87_runtime_result(const softfloat_status_t *caller, IVP_X87_Arithmetic &runtime,
+    const IVP_U_Float80 &result)
+{
+    if(caller->extF80_roundingPrecision == 64 && caller->softfloat_roundingMode == softfloat_round_near_even)
+        return result;
+    return runtime.load(runtime.store_double(result));
+}
+
+IVP_U_Float80 IVP_X87_Arithmetic::arcsine(const IVP_U_Float80 &value)
+{
+    const softfloat_status_t *status = static_cast<const softfloat_status_t *>(get_status());
+    IVP_X87_Arithmetic runtime(ivp_x87_precision(status), ROUND_NEAREST);
+    IVP_U_Float80 result;
+    switch(ivp_x87_unit_domain(runtime, value))
+    {
+    case IVP_X87_INSIDE: result = runtime.arctangent(value, ivp_x87_unit_root(runtime, value)); break;
+    case IVP_X87_PLUS_ONE: result = IVP_U_Float80::from_bits(0x3fff, ivp_x87_pi_significand); break;
+    case IVP_X87_MINUS_ONE: result = IVP_U_Float80::from_bits(0xbfff, ivp_x87_pi_significand); break;
+    case IVP_X87_NAN: return ivp_x87_quiet(value);
+    default: return IVP_U_Float80::from_bits(0xffff, UINT64_C(0xc000000000000000));
+    }
+    return ivp_x87_runtime_result(status, runtime, result);
+}
+
+IVP_U_Float80 IVP_X87_Arithmetic::arccosine(const IVP_U_Float80 &value)
+{
+    const softfloat_status_t *status = static_cast<const softfloat_status_t *>(get_status());
+    IVP_X87_Arithmetic runtime(ivp_x87_precision(status), ROUND_NEAREST);
+    IVP_U_Float80 result;
+    switch(ivp_x87_unit_domain(runtime, value))
+    {
+    case IVP_X87_INSIDE: result = runtime.arctangent(ivp_x87_unit_root(runtime, value), value); break;
+    case IVP_X87_PLUS_ONE: return IVP_U_Float80::from_bits(0, 0);
+    case IVP_X87_MINUS_ONE: result = IVP_U_Float80::from_bits(0x4000, ivp_x87_pi_significand); break;
+    case IVP_X87_NAN: return ivp_x87_quiet(value);
+    default: return IVP_U_Float80::from_bits(0xffff, UINT64_C(0xc000000000000000));
+    }
+    return ivp_x87_runtime_result(status, runtime, result);
+}
+
 IVP_U_Float80 IVP_X87_Arithmetic::power2_minus1(const IVP_U_Float80 &value)
 {
     return ivp_x87_output(f2xm1(ivp_x87_input(value), *static_cast<softfloat_status_t *>(get_status())));

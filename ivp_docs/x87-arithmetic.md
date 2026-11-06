@@ -40,6 +40,14 @@ result is normal or zero. Every other case, precision and rounding uses the
 SoftFloat implementation. Both paths produce the same values and exception
 flags; `tests/numerics/x87_fast_path_test.cxx` compares them.
 
+`IVP_Inline_Math` evaluates sine, cosine, arctangent and the exponential with
+the operations the original build inlines (`fsin`, `fcos`, `fpatan` and the
+`f2xm1`/`fscale` sequence), and arcsine and arccosine through `arcsine` and
+`arccosine`, which follow the C runtime's x87 implementation the original
+build calls. No host math library takes part, so these results do not depend
+on the platform's libm. The runtime returns asin and acos rounded to binary64
+unless the control selects 53-bit precision with nearest rounding.
+
 `IVP_X87_Control` supplies thread-local precision and rounding. Explicit control
 works on every supported target. On 32-bit MSVC, the native control word remains
 authoritative, including changes made by surrounding callers; other targets

@@ -144,6 +144,13 @@ public:
     IVP_U_Float80 sine(const IVP_U_Float80 &value, bool *out_of_range = 0);
     IVP_U_Float80 cosine(const IVP_U_Float80 &value, bool *out_of_range = 0);
     IVP_U_Float80 arctangent(const IVP_U_Float80 &y, const IVP_U_Float80 &x);
+    // The C runtime's x87 asin and acos: for |x| < 1, an arctangent of x and
+    // the square root of (1 + x)(1 - x) at the current precision with nearest
+    // rounding; stored constants for x = +-1; the default NaN outside the
+    // domain. Unless the control is 53-bit nearest, the runtime returns the
+    // result rounded to binary64.
+    IVP_U_Float80 arcsine(const IVP_U_Float80 &value);
+    IVP_U_Float80 arccosine(const IVP_U_Float80 &value);
     IVP_U_Float80 power2_minus1(const IVP_U_Float80 &value);
     IVP_U_Float80 log2_multiply(const IVP_U_Float80 &x, const IVP_U_Float80 &y);
     IVP_U_Float80 round_integer(const IVP_U_Float80 &value);

@@ -9,6 +9,9 @@
 #include <string.h>
 
 #include <ivu_types.hxx>
+#if IVP_ENABLE_X87_EMULATION
+#include <ivu_x87.hxx>
+#endif
 
 #ifdef IVP_WINDOWS_ALIGN16
 #pragma pack(push, 16)
@@ -438,6 +441,53 @@ public:
     {
         return sqrt(f);
     };
+#if IVP_ENABLE_X87_EMULATION
+    // Retail inlines fsin, fcos, fpatan and the f2xm1/fscale exponential, and
+    // calls the C runtime's x87 asin and acos; no host library is involved.
+    static IVP_DOUBLE ivp_sinf(IVP_DOUBLE f)
+    {
+        return sind(f);
+    };
+    static IVP_DOUBLE ivp_cosf(IVP_DOUBLE f)
+    {
+        return cosd(f);
+    };
+    static IVP_DOUBLE sind(IVP_DOUBLE f)
+    {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        return fp.return_double(fp.sine(fp.load(f)));
+    };
+    static IVP_DOUBLE cosd(IVP_DOUBLE f)
+    {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        return fp.return_double(fp.cosine(fp.load(f)));
+    };
+    static IVP_DOUBLE acosd(IVP_DOUBLE f)
+    {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        return fp.return_double(fp.arccosine(fp.load(f)));
+    };
+    static IVP_DOUBLE asind(IVP_DOUBLE f)
+    {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        return fp.return_double(fp.arcsine(fp.load(f)));
+    };
+    static IVP_DOUBLE atand(IVP_DOUBLE f)
+    {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        return fp.return_double(fp.arctangent(fp.load(f), fp.load(1.0)));
+    };
+    static IVP_DOUBLE ivp_expf(IVP_DOUBLE f)
+    {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        return fp.return_double(fp.exponential(fp.load(f)));
+    };
+    static IVP_DOUBLE atan2d(IVP_DOUBLE f1, IVP_DOUBLE f2)
+    {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        return fp.return_double(fp.arctangent(fp.load(f1), fp.load(f2)));
+    };
+#else
     static IVP_DOUBLE ivp_sinf(IVP_DOUBLE f)
     {
         return sin(f);
@@ -474,6 +524,7 @@ public:
     {
         return atan2(f1, f2);
     };
+#endif
 #endif
 };
 
