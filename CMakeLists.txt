@@ -29,6 +29,7 @@ endif()
 set(IVP_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 option(IVP_ENABLE_X87_EMULATION "Reproduce extended precision, rounding and write-back rules (IVP_X87_ARITHMETIC SOFT when that is unset)" OFF)
+option(IVP_X87_MSVC_IA32 "With the emulation on 32-bit MSVC, compile IVP for the x87 (/arch:IA32) like the original build; OFF keeps the toolchain's SSE2 so 32-bit results match other targets" ON)
 set(IVP_X87_ARITHMETIC "" CACHE STRING
     "Restored x87 sequences: OFF, SOFT (portable integer arithmetic) or HARD (the host x87, 32-bit x86 only); empty follows IVP_ENABLE_X87_EMULATION")
 set(IVP_X87_ARITHMETIC_TRANSCENDENTAL "" CACHE STRING
@@ -71,7 +72,7 @@ function(add_ivp_library LIBRARY_NAME SOURCE_DIR DEPENDENCIES SOURCES)
         IVP_X87_ARITHMETIC_TRANSCENDENTAL=${IVP_X87_ARITHMETIC_TRANSCENDENTAL_VALUE})
     if(IVP_ENABLE_X87_EMULATION AND MSVC)
         target_compile_options(${LIBRARY_NAME} PUBLIC /fp:precise)
-        if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+        if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND IVP_X87_MSVC_IA32)
             target_compile_options(${LIBRARY_NAME} PUBLIC /arch:IA32)
         endif()
     elseif(IVP_ENABLE_X87_EMULATION AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

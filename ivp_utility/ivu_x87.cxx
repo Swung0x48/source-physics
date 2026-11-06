@@ -6,8 +6,15 @@
 #include <assert.h>
 #include <new>
 #include <string.h>
-#if defined(_MSC_VER) && defined(_M_IX86)
+
+// 32-bit MSVC code compiled for the x87 (/arch:IA32, _M_IX86_FP == 0) shares
+// the native control word with the surrounding expressions and returns scalars
+// through ST0. An SSE2 build (_M_IX86_FP 2) behaves like every other target.
+#if defined(_MSC_VER) && defined(_M_IX86) && defined(_M_IX86_FP) && _M_IX86_FP == 0
+#define IVP_X87_NATIVE_ABI 1
 #include <float.h>
+#else
+#define IVP_X87_NATIVE_ABI 0
 #endif
 
 typedef char IVP_X87_Status_Size_Check[sizeof(softfloat_status_t) <= 16 ? 1 : -1];
@@ -15,7 +22,7 @@ typedef char IVP_X87_Status_Size_Check[sizeof(softfloat_status_t) <= 16 ? 1 : -1
 static thread_local bool ivp_x87_control_is_explicit = false;
 static thread_local IVP_X87_Control ivp_x87_control =
     {IVP_X87_Arithmetic::PRECISION_64, IVP_X87_Arithmetic::ROUND_NEAREST};
-#if defined(_MSC_VER) && defined(_M_IX86)
+#if IVP_X87_NATIVE_ABI
 static thread_local unsigned int ivp_x87_saved_native_control = 0;
 #endif
 
@@ -27,7 +34,7 @@ IVP_X87_Control IVP_X87_Control::current()
         result.precision = IVP_X87_Arithmetic::PRECISION_64;
         result.rounding = IVP_X87_Arithmetic::ROUND_NEAREST;
     }
-#if defined(_MSC_VER) && defined(_M_IX86)
+#if IVP_X87_NATIVE_ABI
     // Native callers can change the control word after a software selection.
     // The executing FPU remains authoritative for the surrounding expressions.
     unsigned int native_control = 0;
@@ -45,7 +52,7 @@ IVP_X87_Control IVP_X87_Control::current()
 
 void IVP_X87_Control::set(const IVP_X87_Control &control)
 {
-#if defined(_MSC_VER) && defined(_M_IX86)
+#if IVP_X87_NATIVE_ABI
     // Ordinary expressions in the surrounding engine still execute on the
     // native FPU. Keep their precision and rounding in step with the software.
     unsigned int ignored = 0;
@@ -64,7 +71,7 @@ void IVP_X87_Control::set(const IVP_X87_Control &control)
 
 void IVP_X87_Control::reset()
 {
-#if defined(_MSC_VER) && defined(_M_IX86)
+#if IVP_X87_NATIVE_ABI
     if (ivp_x87_control_is_explicit)
     {
         unsigned int ignored = 0;
@@ -198,7 +205,7 @@ double IVP_X87_Arithmetic::store_double_general(const IVP_U_Float80 &value)
     return result;
 }
 
-#if defined(_MSC_VER) && defined(_M_IX86)
+#if IVP_X87_NATIVE_ABI
 // Only transport uses the native ABI; arithmetic remains in the integer
 // numerical backend. The byte encoding avoids depending on object padding.
 static __declspec(naked) double __cdecl ivp_x87_return_double(const unsigned char *)
@@ -222,7 +229,7 @@ static __declspec(naked) float __cdecl ivp_x87_return_float(const unsigned char 
 
 double IVP_X87_Arithmetic::return_double(const IVP_U_Float80 &value)
 {
-#if defined(_MSC_VER) && defined(_M_IX86)
+#if IVP_X87_NATIVE_ABI
     unsigned char bytes[10];
     value.to_bytes(bytes);
     return ivp_x87_return_double(bytes);
@@ -233,7 +240,7 @@ double IVP_X87_Arithmetic::return_double(const IVP_U_Float80 &value)
 
 float IVP_X87_Arithmetic::return_float(const IVP_U_Float80 &value)
 {
-#if defined(_MSC_VER) && defined(_M_IX86)
+#if IVP_X87_NATIVE_ABI
     unsigned char bytes[10];
     value.to_bytes(bytes);
     return ivp_x87_return_float(bytes);
