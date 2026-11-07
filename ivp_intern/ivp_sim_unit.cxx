@@ -1046,7 +1046,10 @@ void IVP_Simulation_Unit::simulate_single_sim_unit_psi(IVP_Event_Sim *es, IVP_U_
         }
         sim_unit_has_fast_objects = IVP_FALSE;
 #ifdef IVP_PORTABLE_BMMO
+        // the unit's countdown runs in every mode, so a session starts from the same countdowns as before the switch
         check_movement_state = this->must_perform_movement_check(); // do not always make movement check (per unit, see .hxx)
+        if (!es->environment->bmmo_unit_movement_check)
+            check_movement_state = es->environment->must_perform_movement_check(); // outside a session: the retail one
 #else
         check_movement_state = es->environment->must_perform_movement_check(); // do not always make movement check
 #endif

@@ -249,6 +249,9 @@ IVP_Environment::IVP_Environment(IVP_Environment_Manager *manager, IVP_Applicati
     }
 
     next_movement_check = IVP_MOVEMENT_CHECK_COUNT;
+#ifdef IVP_PORTABLE_BMMO
+    bmmo_unit_movement_check = IVP_FALSE;
+#endif
 
     IVP_IF(1)
     {

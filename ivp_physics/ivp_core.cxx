@@ -1310,8 +1310,60 @@ IVP_Core_Merged::IVP_Core_Merged(IVP_Core *core0, IVP_Core *core1) : IVP_Core(co
 }
 
 // @@@ maybe not necessary each PSI !!!!
+#if IVP_ENABLE_X87_EMULATION
+// IVP_Core::calc_movement_state's test (0x0D680): has the core moved from a calm reference? The distance
+// (dz^2 + dy^2) + dx^2 and the rotation estimate 2 (1 - s^2) r r, s = ((w w' + z z') + y y') + x x', stay on the x87
+// stack; each limit is the exact square of its float constant as a double; strictly above moves.
+static bool ivp_core_moved_from(IVP_X87_Arithmetic &fp, const IVP_U_Point &position, const IVP_U_Float_Point &reference,
+    const IVP_U_Quat &rotation, const IVP_U_Float_Quat &rotation_reference, IVP_FLOAT radius,
+    IVP_DOUBLE translation_limit, IVP_DOUBLE rotation_limit)
+{
+    IVP_U_Float80 d[3];
+    for (int axis = 0; axis < 3; ++axis)
+        d[axis] = fp.subtract(fp.load(position.k[axis]), fp.load(reference.k[axis]));
+    const IVP_U_Float80 distance = fp.add(fp.add(fp.multiply(d[2], d[2]), fp.multiply(d[1], d[1])), fp.multiply(d[0], d[0]));
+    if (fp.compare(distance, fp.load(translation_limit)) == IVP_X87_Arithmetic::GREATER)
+        return true;
+    const IVP_U_Float80 cosine = fp.add(fp.add(fp.add(
+        fp.multiply(fp.load(rotation_reference.w), fp.load(rotation.w)), fp.multiply(fp.load(rotation_reference.z), fp.load(rotation.z))),
+        fp.multiply(fp.load(rotation_reference.y), fp.load(rotation.y))), fp.multiply(fp.load(rotation_reference.x), fp.load(rotation.x)));
+    IVP_U_Float80 estimate = fp.subtract(fp.load(1.0), fp.multiply(cosine, cosine));
+    estimate = fp.multiply(fp.multiply(fp.add(estimate, estimate), fp.load(radius)), fp.load(radius));
+    return fp.compare(estimate, fp.load(rotation_limit)) == IVP_X87_Arithmetic::GREATER;
+}
+#endif
+
 IVP_Movement_Type IVP_Core::calc_movement_state(IVP_Time psi_time)
 {
+#if IVP_ENABLE_X87_EMULATION
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_DOUBLE short_translation = IVP_DOUBLE(IVP_MINIMAL_TRANS_SPEED_PER_PSI_SHORT) * IVP_MINIMAL_TRANS_SPEED_PER_PSI_SHORT;
+    const IVP_DOUBLE short_rotation = IVP_DOUBLE(IVP_MINIMAL_ROT_SPEED_PER_PSI_SHORT) * IVP_MINIMAL_ROT_SPEED_PER_PSI_SHORT;
+    const IVP_DOUBLE long_translation = IVP_DOUBLE(IVP_MINIMAL_TRANS_SPEED_PER_PSI_LONG) * IVP_MINIMAL_TRANS_SPEED_PER_PSI_LONG;
+    const IVP_DOUBLE long_rotation = IVP_DOUBLE(IVP_MINIMAL_ROT_SPEED_PER_PSI_LONG) * IVP_MINIMAL_ROT_SPEED_PER_PSI_LONG;
+    if (!ivp_core_moved_from(fp, pos_world_f_core_last_psi, position_world_f_core_calm_reference[0],
+            q_world_f_core_next_psi, q_world_f_core_calm_reference[0], upper_limit_radius, short_translation, short_rotation))
+    {
+        // the unrounded time since the reference against the float freeze interval (below or unordered calms)
+        const IVP_U_Float80 since = fp.subtract(fp.load(psi_time.get_seconds()), fp.load(time_of_calm_reference[0].get_seconds()));
+        const IVP_X87_Arithmetic::Relation r = fp.compare(fp.load(environment->get_freeze_manager()->freeze_check_dtime), since);
+        return r == IVP_X87_Arithmetic::LESS || r == IVP_X87_Arithmetic::UNORDERED ? IVP_MT_CALM : IVP_MT_SLOW;
+    }
+    q_world_f_core_calm_reference[0].set(&q_world_f_core_next_psi);
+    position_world_f_core_calm_reference[0].set(&pos_world_f_core_last_psi);
+    this->time_of_calm_reference[0] = psi_time.get_time();
+    if (!ivp_core_moved_from(fp, pos_world_f_core_last_psi, position_world_f_core_calm_reference[1],
+            q_world_f_core_last_psi, q_world_f_core_calm_reference[1], upper_limit_radius, long_translation, long_rotation))
+    {
+        const IVP_U_Float80 since = fp.subtract(fp.load(psi_time.get_seconds()), fp.load(time_of_calm_reference[1].get_seconds()));
+        return fp.compare(since, fp.load(IVP_DOUBLE(IVP_HAS_MOVED_LONG_TIME))) == IVP_X87_Arithmetic::GREATER
+            ? IVP_MT_CALM : IVP_MT_MOVING;  // enforce calm down after some seconds
+    }
+    q_world_f_core_calm_reference[1].set(&q_world_f_core_last_psi);
+    position_world_f_core_calm_reference[1].set(&pos_world_f_core_last_psi);
+    this->time_of_calm_reference[1] = psi_time.get_time();
+    return IVP_MT_MOVING;
+#else
 
     // check short time movements
     while (1)
@@ -1357,6 +1409,7 @@ IVP_Movement_Type IVP_Core::calc_movement_state(IVP_Time psi_time)
     this->time_of_calm_reference[1] = psi_time.get_time();
 
     return IVP_MT_MOVING;
+#endif
 }
 
 // create a new collision core
