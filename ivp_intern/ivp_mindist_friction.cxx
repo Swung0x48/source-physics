@@ -681,19 +681,27 @@ void IVP_Contact_Point::recalc_friction_s_vals()
         }
         info->contact_core[1] = core1;
     }
-    if (info->inv_virtual_mass > P_DOUBLE_EPS) {
-        info->virtual_mass = 1.0f / info->inv_virtual_mass;
-    } else {
-        info->virtual_mass = 0.0f;
-    }
+    info->virtual_mass = 1.0f / info->inv_virtual_mass; // retail 0x1FF49 divides unconditionally (no P_DOUBLE_EPS guard)
     {
         IVP_Time ctime = syn0->get_object()->environment->get_current_time();
+#if IVP_ENABLE_X87_EMULATION
+        // Retail RVA 0x1FF5D: dt stored as a double; s[i] - dot * dt with the
+        // dot ((z + y) + x) and the product in ST, one float store.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_DOUBLE dt = fp.store_double(fp.subtract(fp.load(ctime.get_seconds()),
+                                                          fp.load(this->last_time_of_recalc_friction_s_vals.get_seconds())));
+        this->last_time_of_recalc_friction_s_vals = ctime;
+        for (int i = 0; i < 2; i++)
+            this->span_friction_s[i] = fp.store_float(fp.subtract(fp.load(this->span_friction_s[i]),
+                fp.multiply(delta_velocity_ws.dot_product_extended(fp, &info->span_friction_v[i]), fp.load(dt))));
+#else
         IVP_DOUBLE dt = ctime - this->last_time_of_recalc_friction_s_vals;
         this->last_time_of_recalc_friction_s_vals = ctime;
 
         // vector of v[0]*s[0] + v[1]*s[1] is real world force vector of force that has to be done on first obj (is pointing to second obj)
         this->span_friction_s[0] -= delta_velocity_ws.dot_product(&info->span_friction_v[0]) * dt;
         this->span_friction_s[1] -= delta_velocity_ws.dot_product(&info->span_friction_v[1]) * dt;
+#endif
         this->last_contact_point_ws.set(&info->contact_point_ws);
         // Cache surface normal as needed by external code.
         // tmp_contact_info nulled in debug_clean_tmp_info.

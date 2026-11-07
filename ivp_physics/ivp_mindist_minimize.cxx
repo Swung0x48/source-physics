@@ -682,6 +682,38 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::minimize_BB(IVP_Mindist_Minimize_Solve
     IVP_U_Point *A = m_cache_A->m_world_f_object.get_position();
     IVP_U_Point *B = m_cache_B->m_world_f_object.get_position();
 
+#if IVP_ENABLE_X87_EMULATION
+    {
+        // Retail RVA 0x1A370 (body 0x1A427, VC6 listing identical): x and y of A - B are
+        // stored straight as floats, z through a double; the squared length
+        // (x*x + y*y) + z*z and the inlined isqrt(qlen, 3) stay in ST; the
+        // length and the scaled plane are float stores. The center offset of
+        // the halfspace dot is not rounded: (y + z) + x in ST.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        IVP_Mindist *md = mms->mindist;
+        IVP_U_Float_Point &plane = md->contact_plane;
+        plane.k[0] = fp.store_float(fp.subtract(fp.load(A->k[0]), fp.load(B->k[0])));
+        plane.k[1] = fp.store_float(fp.subtract(fp.load(A->k[1]), fp.load(B->k[1])));
+        plane.k[2] = fp.store_float(fp.load(fp.store_double(fp.subtract(fp.load(A->k[2]), fp.load(B->k[2])))));
+        const IVP_U_Float80 x = fp.load(plane.k[0]), y = fp.load(plane.k[1]), z = fp.load(plane.k[2]);
+        const IVP_U_Float80 qlen = fp.add(fp.add(fp.multiply(x, x), fp.multiply(y, y)), fp.multiply(z, z));
+        IVP_U_Float80 inv_len = fp.load(1.0);
+        const IVP_X87_Arithmetic::Relation relation = fp.compare(fp.absolute(qlen), fp.load(P_DOUBLE_EPS));
+        if (relation == IVP_X87_Arithmetic::GREATER)
+            inv_len = IVP_Fast_Math::isqrt_extended(fp, qlen, 3);
+        md->len_numerator = fp.store_float(fp.subtract(fp.multiply(inv_len, qlen), fp.load(md->sum_extra_radius)));
+        for (int i = 0; i < 3; i++)
+            plane.k[i] = fp.store_float(fp.multiply(fp.load(plane.k[i]), inv_len));
+#ifdef IVP_HALFSPACE_OPTIMIZATION_ENABLED
+        IVP_U_Float80 diff_center[3];
+        for (int i = 0; i < 3; i++)
+            diff_center[i] = fp.subtract(fp.load(m_cache_A->core_pos.k[i]), fp.load(m_cache_B->core_pos.k[i]));
+        md->contact_dot_diff_center = fp.store_float(fp.add(fp.add(
+            fp.multiply(fp.load(plane.k[1]), diff_center[1]), fp.multiply(diff_center[2], fp.load(plane.k[2]))),
+            fp.multiply(fp.load(plane.k[0]), diff_center[0])));
+#endif
+    }
+#else
     mms->mindist->contact_plane.subtract(A, B);
     IVP_DOUBLE qlen = mms->mindist->contact_plane.quad_length();
     IVP_DOUBLE inv_len;
@@ -700,6 +732,7 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::minimize_BB(IVP_Mindist_Minimize_Solve
     IVP_U_Float_Point diff_center;
     diff_center.subtract(&m_cache_A->core_pos, &m_cache_B->core_pos);
     mms->mindist->contact_dot_diff_center = diff_center.dot_product(&mms->mindist->contact_plane);
+#endif
 #endif
 
     m_cache_A->remove_reference();

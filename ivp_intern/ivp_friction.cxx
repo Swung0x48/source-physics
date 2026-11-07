@@ -11,6 +11,7 @@
 #include <ivu_memory.hxx>
 #if IVP_ENABLE_X87_EMULATION
 #include <ivu_x87.hxx>
+#include <ivu_float.hxx>
 #endif
 #include <ivp_great_matrix.hxx>
 #include <ivp_sim_unit.hxx>
@@ -302,10 +303,22 @@ void IVP_Contact_Point::static_friction_single(const IVP_Event_Sim *es, IVP_FLOA
 IVP_FLOAT IVP_Contact_Point::friction_force_local_constraint_2d(const IVP_Event_Sim *es)
 {
 	IVP_Impact_Solver_Long_Term *info = this->tmp_contact_info;
+#if IVP_ENABLE_X87_EMULATION
+	// Retail RVA 0x1B080: the product stays in ST for the compare; fst keeps a
+	// double copy for the clip below.
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	const IVP_U_Float80 maximum = fp.multiply(fp.multiply(fp.load(this->now_friction_pressure), fp.load(this->real_friction_factor)),
+	                                          fp.load(es->delta_time));
+	const IVP_DOUBLE maximum_impulse_force = fp.store_double(maximum);
+	const IVP_X87_Arithmetic::Relation maximum_relation = fp.compare(maximum, fp.load(P_FLOAT_RES));
+	if (maximum_relation == IVP_X87_Arithmetic::LESS || maximum_relation == IVP_X87_Arithmetic::UNORDERED)
+		return 0.0f;
+#else
 	// RVA 0x1B080 keeps this product in x87 until multiplying the double step.
 	IVP_DOUBLE maximum_impulse_force = IVP_DOUBLE(this->now_friction_pressure) * this->real_friction_factor * es->delta_time;
 	if (maximum_impulse_force < P_FLOAT_RES)
 		return 0.0f;
+#endif
 
 	IVP_Core *core_a = info->contact_core[0];
 	IVP_Core *core_b = info->contact_core[1];
@@ -324,7 +337,6 @@ IVP_FLOAT IVP_Contact_Point::friction_force_local_constraint_2d(const IVP_Event_
 	IVP_DOUBLE inv_mat2x2[4];
 	IVP_U_Float_Point impulses;
 #if IVP_ENABLE_X87_EMULATION
-    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
     const IVP_U_Float80 a = fp.subtract(fp.multiply(fp.load(span_friction_s[0]), fp.load(es->i_delta_time)), fp.load(tcb.delta_velocity_ds.k[0]));
     const IVP_U_Float80 b = fp.subtract(fp.multiply(fp.load(span_friction_s[1]), fp.load(es->i_delta_time)), fp.load(tcb.delta_velocity_ds.k[1]));
     const IVP_U_Float80 m00 = fp.load(tpm.get_elem(0, 0)), m01 = fp.load(tpm.get_elem(0, 1)), m11 = fp.load(tpm.get_elem(1, 1));
@@ -361,6 +373,33 @@ IVP_FLOAT IVP_Contact_Point::friction_force_local_constraint_2d(const IVP_Event_
 	impulses.k[1] = inv_mat2x2[2] * a + inv_mat2x2[3] * b;
 #endif
 
+#if IVP_ENABLE_X87_EMULATION
+	// Retail RVA 0x1B7E8: the squared impulse stays in ST for the compare with
+	// the squared limit (also in ST) and is kept as a double for the energy;
+	// isqrt_float (0xDAE0) gets it as a float and its ST0 result times the
+	// limit scales both impulses, each stored straight as a float.
+	const IVP_U_Float80 square = fp.add(fp.multiply(fp.load(impulses.k[1]), fp.load(impulses.k[1])),
+	                                    fp.multiply(fp.load(impulses.k[0]), fp.load(impulses.k[0])));
+	const IVP_DOUBLE square_impulse = fp.store_double(square);
+	const IVP_U_Float80 limit = fp.load(maximum_impulse_force);
+	if (fp.compare(square, fp.multiply(limit, limit)) == IVP_X87_Arithmetic::GREATER)
+	{
+		const IVP_U_Float80 f = fp.multiply(IVP_Fast_Math::isqrt_extended(fp, double(fp.store_float(square)), 2), limit);
+		impulses.k[0] = fp.store_float(fp.multiply(fp.load(impulses.k[0]), f));
+		impulses.k[1] = fp.store_float(fp.multiply(fp.load(impulses.k[1]), f));
+	}
+
+	tcb.exert_impulse_dim2(core_a, core_b, impulses);
+
+	// calc  current energy, all in ST: 0.5 * sqrt((s0*s0 + s1*s1) * (dt*dt*square_impulse))
+	const IVP_U_Float80 s0 = fp.load(span_friction_s[0]), s1 = fp.load(span_friction_s[1]), dt = fp.load(es->delta_time);
+	const IVP_U_Float80 e = fp.multiply(fp.square_root(fp.multiply(fp.add(fp.multiply(s0, s0), fp.multiply(s1, s1)),
+	                                                               fp.multiply(fp.multiply(dt, dt), fp.load(square_impulse)))),
+	                                    fp.load(0.5));
+	const IVP_FLOAT diff_e = fp.store_float(fp.subtract(e, fp.load(this->old_energy_dynamic_fr)));
+	this->old_energy_dynamic_fr = fp.store_float(e);
+	return diff_e;
+#else
 	IVP_DOUBLE square_impulse;
 	square_impulse = IVP_DOUBLE(impulses.k[1]) * impulses.k[1] + IVP_DOUBLE(impulses.k[0]) * impulses.k[0];
 
@@ -381,6 +420,7 @@ IVP_FLOAT IVP_Contact_Point::friction_force_local_constraint_2d(const IVP_Event_
 	IVP_FLOAT diff_e = e - this->old_energy_dynamic_fr;
 	this->old_energy_dynamic_fr = e;
 	return diff_e;
+#endif
 }
 
 void IVP_Contact_Point::friction_force_local_constraint_1d(const IVP_Event_Sim *es)
@@ -502,6 +542,19 @@ IVP_FLOAT IVP_Friction_Core_Pair::get_sum_slide_way(const IVP_Event_Sim *es)
 {
 	// RVA 0x1BC20 keeps each product and the pair sum in x87 until both
 	// double time factors are applied; a float result per contact rounds early.
+#if IVP_ENABLE_X87_EMULATION
+	// (factor * pressure) * inv_virt_mass, summed in ST; one float store.
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	IVP_U_Float80 slide = fp.load(0.0f);
+	for (int i = fr_dists.len() - 1; i >= 0; i--)
+	{
+		IVP_Contact_Point *my_fr = fr_dists.element_at(i);
+		slide = fp.add(slide, fp.multiply(fp.multiply(fp.load(my_fr->now_friction_pressure), fp.load(my_fr->real_friction_factor)),
+		                                  fp.load(my_fr->inv_virt_mass_mindist_no_dir)));
+	}
+	const IVP_U_Float80 dt = fp.load(es->delta_time);
+	return fp.store_float(fp.multiply(fp.multiply(slide, dt), dt));
+#else
 	IVP_DOUBLE sum = 0.0;
 	for (int i = fr_dists.len() - 1; i >= 0; i--)
 	{
@@ -510,11 +563,40 @@ IVP_FLOAT IVP_Friction_Core_Pair::get_sum_slide_way(const IVP_Event_Sim *es)
 			* my_fr->inv_virt_mass_mindist_no_dir;
 	}
 	return sum * es->delta_time * es->delta_time;
+#endif
 }
 
+#if IVP_ENABLE_X87_EMULATION
+void IVP_Contact_Point::calc_pretension(IVP_FLOAT len, IVP_BOOL limit_as_float)
+#else
 void IVP_Contact_Point::calc_pretension(IVP_FLOAT len)
+#endif
 { // clip pretension
 	// this->cp_status = IVP_CPBS_NEEDS_RECHECK;
+#if IVP_ENABLE_X87_EMULATION
+	// Retail RVA 0x1BC9D (inlined in calc_friction_forces) stores the limit
+	// len*len + P_FLOAT_RES as a float, 0x1D778 keeps it in ST; the squared
+	// length stays in ST for the compare and is kept as a double;
+	// isqrt_float gets it as a float and its ST0 result is used unrounded.
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	IVP_U_Float80 limit = fp.add(fp.multiply(fp.load(len), fp.load(len)), fp.load(P_FLOAT_RES));
+	if (limit_as_float)
+		limit = fp.load(fp.store_float(limit));
+	const IVP_U_Float80 s0 = fp.load(span_friction_s[0]), s1 = fp.load(span_friction_s[1]);
+	const IVP_U_Float80 qlen = fp.add(fp.multiply(s0, s0), fp.multiply(s1, s1));
+	const IVP_DOUBLE qlen_of_spring = fp.store_double(qlen);
+	if (fp.compare(qlen, limit) == IVP_X87_Arithmetic::GREATER)
+	{
+		const IVP_U_Float80 ilen = IVP_Fast_Math::isqrt_extended(fp, double(fp.store_float(qlen)), 2);
+		const IVP_U_Float80 destroyed = fp.multiply(fp.multiply(fp.subtract(fp.multiply(ilen, fp.load(qlen_of_spring)), fp.load(len)),
+		                                                        fp.load(now_friction_pressure)), fp.load(real_friction_factor));
+		this->integrated_destroyed_energy = fp.store_float(fp.add(destroyed, fp.load(this->integrated_destroyed_energy)));
+		const IVP_U_Float80 percent_of_old = fp.multiply(ilen, fp.load(len));
+		span_friction_s[0] = fp.store_float(fp.multiply(fp.load(span_friction_s[0]), percent_of_old));
+		span_friction_s[1] = fp.store_float(fp.multiply(fp.load(span_friction_s[1]), percent_of_old));
+		this->cp_status = IVP_CPBS_NEEDS_RECHECK;
+	}
+#else
 	IVP_DOUBLE qlen_of_spring = IVP_DOUBLE(span_friction_s[0]) * span_friction_s[0] + IVP_DOUBLE(span_friction_s[1]) * span_friction_s[1];
 	if (qlen_of_spring > IVP_DOUBLE(len) * len + P_FLOAT_RES)
 	{
@@ -525,6 +607,7 @@ void IVP_Contact_Point::calc_pretension(IVP_FLOAT len)
 		span_friction_s[1] *= percent_of_old;
 		this->cp_status = IVP_CPBS_NEEDS_RECHECK;
 	}
+#endif
 }
 
 // some comments about two friction values:
@@ -607,8 +690,16 @@ void IVP_Friction_Info_For_Core::set_all_dists_of_obj_neutral()
 void IVP_Contact_Point::ease_the_friction_force(IVP_U_Float_Point *ease_diff_vec)
 {
 	IVP_Impact_Solver_Long_Term *info = tmp_contact_info;
+#if IVP_ENABLE_X87_EMULATION
+	// Retail RVA 0x1BD90: s[i] + dot, the dot in ST ((z + y) + x), one float store.
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	for (int i = 0; i < 2; i++)
+		this->span_friction_s[i] = fp.store_float(fp.add(info->span_friction_v[i].dot_product_extended(fp, ease_diff_vec),
+		                                                 fp.load(this->span_friction_s[i])));
+#else
 	this->span_friction_s[0] += ease_diff_vec->dot_product(&info->span_friction_v[0]);
 	this->span_friction_s[1] += ease_diff_vec->dot_product(&info->span_friction_v[1]);
+#endif
 	return;
 }
 
@@ -837,12 +928,21 @@ void IVP_Friction_Solver::ease_friction_pair(IVP_Friction_Core_Pair *my_pair, IV
 				IVP_Contact_Point *fr_dist2 = all_my_dists[j];
 				if ((fr_dist2->now_friction_pressure > P_DOUBLE_EPS) || 1)
 				{
+#if IVP_ENABLE_X87_EMULATION
+					// Retail RVA 0x1C146: |(|dot| - 1)| in ST against the double 1e-3f; unordered counts as less.
+					IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+					const IVP_U_Float80 conform = fp.absolute(fp.subtract(fp.absolute(
+						fr_dist->get_lt()->surf_normal.dot_product_extended(fp, &fr_dist2->get_lt()->surf_normal)), fp.load(1.0)));
+					const IVP_X87_Arithmetic::Relation conform_relation = fp.compare(conform, fp.load(1E-3f));
+					if (conform_relation == IVP_X87_Arithmetic::LESS || conform_relation == IVP_X87_Arithmetic::UNORDERED)
+#else
 					IVP_DOUBLE dir_conform = fr_dist->get_lt()->surf_normal.dot_product(&fr_dist2->get_lt()->surf_normal); // near -1.0f or near 1.0f
 
 					dir_conform = IVP_Inline_Math::fabsd(dir_conform) - 1.0f;
 					dir_conform = IVP_Inline_Math::fabsd(dir_conform);
 					// printf("dirconform %f\n",dir_conform);
 					if ((dir_conform < 1E-3f) || 0) // due to random stray in distances the vectors between point-surface and edge-edge are not really parallel
+#endif
 					{
 						// printf("eaase ");
 						ease_two_mindists(fr_dist2, fr_dist, &ease_diff_force_vec_stack[j], &ease_diff_force_vec_stack[i], easing_factor);
@@ -1687,21 +1787,62 @@ void IVP_Friction_Core_Pair::remove_energy_gained_by_real_friction()
 	amount_energy_destr = destroy_mutual_energy(energy_to_remove);
 	// printf("destr_eee %f\n",amount_energy_destr);
 	// printf("destroyed %f\n",amount_energy_destr);
+#if IVP_ENABLE_X87_EMULATION
+	// RVA 0x1CCFF: both the sum and the float subtraction are taken in ST.
+	IVP_DOUBLE &sum_destroyed = objs[0]->environment->get_statistic_manager()->sum_energy_destr;
+	sum_destroyed = fp.store_double(fp.add(fp.load(amount_energy_destr), fp.load(sum_destroyed)));
+	integrated_anti_energy = fp.store_float(fp.subtract(fp.load(integrated_anti_energy), fp.load(amount_energy_destr)));
+#else
 	//	IVP_IF(1) {
 	objs[0]->environment->get_statistic_manager()->sum_energy_destr += amount_energy_destr;
 	//	}
 	integrated_anti_energy -= amount_energy_destr;
 #endif
+#endif
 }
+
+#if IVP_ENABLE_X87_EMULATION
+// RVA 0x1CD20, returned in ST0.
+static IVP_U_Float80 ivp_impulse_to_reduce_energy_level(IVP_X87_Arithmetic &fp, IVP_DOUBLE speed_pot,
+	IVP_DOUBLE inv_mass0, IVP_DOUBLE inv_mass1, IVP_DOUBLE delta_e)
+{
+    const IVP_U_Float80 mass_sum = fp.add(fp.load(inv_mass0), fp.load(inv_mass1));
+    const IVP_U_Float80 energy = fp.load(delta_e), speed = fp.load(speed_pot);
+    const IVP_U_Float80 root = fp.square_root(fp.absolute(fp.subtract(fp.multiply(speed, speed), fp.multiply(fp.add(energy, energy), mass_sum))));
+    return fp.multiply(fp.subtract(speed, root), fp.divide(fp.load(1.0), mass_sum));
+}
+
+// RVA 0x1CD60, returned in ST0.
+static IVP_U_Float80 ivp_energy_potential(IVP_X87_Arithmetic &fp, IVP_DOUBLE speed_pot, IVP_DOUBLE mass0,
+	IVP_DOUBLE mass1, IVP_DOUBLE inv_mass0, IVP_DOUBLE inv_mass1)
+{
+    const IVP_U_Float80 speed = fp.load(speed_pot);
+    const IVP_U_Float80 impulse = fp.divide(speed, fp.add(fp.load(inv_mass0), fp.load(inv_mass1)));
+    const IVP_U_Float80 speed1 = fp.subtract(speed, fp.multiply(impulse, fp.load(inv_mass1)));
+    const IVP_DOUBLE energy1 = fp.store_double(fp.multiply(fp.multiply(speed1, speed1), fp.load(mass1)));
+    const IVP_U_Float80 speed0 = fp.multiply(impulse, fp.load(inv_mass0));
+    const IVP_U_Float80 energy0 = fp.multiply(fp.multiply(speed0, speed0), fp.load(mass0));
+    return fp.multiply(fp.subtract(fp.subtract(fp.multiply(fp.multiply(speed, speed), fp.load(mass1)), energy0), fp.load(energy1)), fp.load(0.5));
+}
+
+// target += v * f as inlined in RVA 0x1D0E0: x stored straight as a float,
+// y and z spilled as doubles first.
+static void ivp_energizer_add_multiple(IVP_X87_Arithmetic &fp, IVP_U_Float_Point *target,
+	const IVP_U_Float_Point *v, const IVP_U_Float80 &f)
+{
+    for (int i = 0; i < 3; ++i)
+    {
+        const IVP_U_Float80 sum = fp.add(fp.multiply(fp.load(v->k[i]), f), fp.load(target->k[i]));
+        target->k[i] = i == 0 ? fp.store_float(sum) : fp.store_float(fp.load(fp.store_double(sum)));
+    }
+}
+#endif
 
 IVP_DOUBLE IVP_Mutual_Energizer::calc_impulse_to_reduce_energy_level(IVP_DOUBLE speed_pot, IVP_DOUBLE inv_mass0, IVP_DOUBLE inv_mass1, IVP_DOUBLE delta_e)
 {
 #if IVP_ENABLE_X87_EMULATION
     IVP_X87_Arithmetic fp(IVP_X87_Control::current());
-    const IVP_U_Float80 mass_sum = fp.add(fp.load(inv_mass0), fp.load(inv_mass1));
-    const IVP_U_Float80 energy = fp.load(delta_e), speed = fp.load(speed_pot);
-    const IVP_U_Float80 root = fp.square_root(fp.absolute(fp.subtract(fp.multiply(speed, speed), fp.multiply(fp.add(energy, energy), mass_sum))));
-    return fp.return_double(fp.multiply(fp.subtract(speed, root), fp.divide(fp.load(1.0), mass_sum)));
+    return fp.return_double(ivp_impulse_to_reduce_energy_level(fp, speed_pot, inv_mass0, inv_mass1, delta_e));
 #else
     IVP_DOUBLE inv_mass_sum=inv_mass0+inv_mass1;
     IVP_DOUBLE root=IVP_Inline_Math::sqrtd(IVP_Inline_Math::fabsd(speed_pot*speed_pot-(delta_e+delta_e)*inv_mass_sum));
@@ -1713,13 +1854,7 @@ IVP_DOUBLE IVP_Mutual_Energizer::calc_energy_potential(IVP_DOUBLE speed_pot, IVP
 {
 #if IVP_ENABLE_X87_EMULATION
     IVP_X87_Arithmetic fp(IVP_X87_Control::current());
-    const IVP_U_Float80 speed = fp.load(speed_pot);
-    const IVP_U_Float80 impulse = fp.divide(speed, fp.add(fp.load(inv_mass0), fp.load(inv_mass1)));
-    const IVP_U_Float80 speed1 = fp.subtract(speed, fp.multiply(impulse, fp.load(inv_mass1)));
-    const IVP_DOUBLE energy1 = fp.store_double(fp.multiply(fp.multiply(speed1, speed1), fp.load(mass1)));
-    const IVP_U_Float80 speed0 = fp.multiply(impulse, fp.load(inv_mass0));
-    const IVP_U_Float80 energy0 = fp.multiply(fp.multiply(speed0, speed0), fp.load(mass0));
-    return fp.return_double(fp.multiply(fp.subtract(fp.subtract(fp.multiply(fp.multiply(speed, speed), fp.load(mass1)), energy0), fp.load(energy1)), fp.load(0.5)));
+    return fp.return_double(ivp_energy_potential(fp, speed_pot, mass0, mass1, inv_mass0, inv_mass1));
 #else
     IVP_DOUBLE x=speed_pot/(inv_mass0+inv_mass1);
     IVP_DOUBLE speed1=speed_pot-x*inv_mass1;
@@ -1813,16 +1948,45 @@ void IVP_Mutual_Energizer::init_mutual_energizer(IVP_Core *core0, IVP_Core *core
 
 void IVP_Mutual_Energizer::calc_energy_potential()
 {
+#if IVP_ENABLE_X87_EMULATION
+	// RVA 0x1D060: the rotation energy is stored first; the translation energy
+	// stays in ST0 for the sum.
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	rot_energy_potential = fp.store_double(ivp_energy_potential(fp, rot_speed_potential, rot_inertia[0], rot_inertia[1], inv_rot_inertia[0], inv_rot_inertia[1]));
+	const IVP_U_Float80 trans = ivp_energy_potential(fp, trans_speed_potential, trans_inertia[0], trans_inertia[1], inv_trans_inertia[0], inv_trans_inertia[1]);
+	trans_energy_potential = fp.store_double(trans);
+	whole_mutual_energy = fp.store_double(fp.add(trans, fp.load(rot_energy_potential)));
+#else
 	rot_energy_potential = calc_energy_potential(rot_speed_potential, rot_inertia[0], rot_inertia[1], inv_rot_inertia[0], inv_rot_inertia[1]);
 	trans_energy_potential = calc_energy_potential(trans_speed_potential, trans_inertia[0], trans_inertia[1], inv_trans_inertia[0], inv_trans_inertia[1]);
 	whole_mutual_energy = trans_energy_potential + rot_energy_potential;
+#endif
 }
 
 void IVP_Mutual_Energizer::destroy_percent_energy(IVP_DOUBLE percent_energy_to_destroy)
 {
+#if IVP_ENABLE_X87_EMULATION
+	// RVA 0x1D0E0: the energies to destroy are stored as doubles; the
+	// rotation impulse is stored, the translation impulse stays in ST; each
+	// push factor (impulse * inverse inertia) stays in ST.
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	const IVP_U_Float80 percent = fp.load(percent_energy_to_destroy);
+	const IVP_DOUBLE rot_impulse = fp.store_double(ivp_impulse_to_reduce_energy_level(fp, rot_speed_potential, inv_rot_inertia[0], inv_rot_inertia[1],
+		fp.store_double(fp.multiply(percent, fp.load(rot_energy_potential)))));
+	const IVP_U_Float80 trans_impulse = ivp_impulse_to_reduce_energy_level(fp, trans_speed_potential, inv_trans_inertia[0], inv_trans_inertia[1],
+		fp.store_double(fp.multiply(percent, fp.load(trans_energy_potential))));
+	if (!core[0]->physical_unmoveable) // retail 0x1D152 tests only physical_unmoveable, not pinned
+	{
+		ivp_energizer_add_multiple(fp, &core[0]->speed_change, &trans_vec_world, fp.multiply(trans_impulse, fp.load(inv_trans_inertia[0])));
+		ivp_energizer_add_multiple(fp, &core[0]->rot_speed_change, &rot_vec_obj[0], fp.multiply(fp.load(rot_impulse), fp.load(inv_rot_inertia[0])));
+	}
+	trans_vec_world.mult(-1.0f);
+	ivp_energizer_add_multiple(fp, &core[1]->speed_change, &trans_vec_world, fp.multiply(trans_impulse, fp.load(inv_trans_inertia[1])));
+	ivp_energizer_add_multiple(fp, &core[1]->rot_speed_change, &rot_vec_obj[1], fp.multiply(fp.load(rot_impulse), fp.load(inv_rot_inertia[1])));
+#else
 	IVP_DOUBLE rot_impulse = calc_impulse_to_reduce_energy_level(rot_speed_potential, inv_rot_inertia[0], inv_rot_inertia[1], percent_energy_to_destroy * rot_energy_potential);
 	IVP_DOUBLE trans_impulse = calc_impulse_to_reduce_energy_level(trans_speed_potential, inv_trans_inertia[0], inv_trans_inertia[1], percent_energy_to_destroy * trans_energy_potential);
-	if (!core[0]->physical_unmoveable && !core[0]->pinned)
+	if (!core[0]->physical_unmoveable) // retail 0x1D152: no pinned test
 	{
 		core[0]->speed_change.add_multiple(&trans_vec_world, inv_trans_inertia[0] * trans_impulse);
 		core[0]->rot_speed_change.add_multiple(&rot_vec_obj[0], inv_rot_inertia[0] * rot_impulse);
@@ -1831,6 +1995,7 @@ void IVP_Mutual_Energizer::destroy_percent_energy(IVP_DOUBLE percent_energy_to_d
 	// printf("muttd %f %f\n",trans_impulse,rot_impulse);
 	core[1]->speed_change.add_multiple(&trans_vec_world, inv_trans_inertia[1] * trans_impulse);
 	core[1]->rot_speed_change.add_multiple(&rot_vec_obj[1], inv_rot_inertia[1] * rot_impulse);
+#endif
 }
 
 IVP_DOUBLE IVP_Friction_Core_Pair::destroy_mutual_energy(IVP_DOUBLE d_e)
@@ -1839,6 +2004,20 @@ IVP_DOUBLE IVP_Friction_Core_Pair::destroy_mutual_energy(IVP_DOUBLE d_e)
 	mutual_energizer_stack.init_mutual_energizer(objs[0], objs[1]);
 
 	mutual_energizer_stack.calc_energy_potential();
+#if IVP_ENABLE_X87_EMULATION
+	// RVA 0x1D2A0: the limit stays in ST for the comparison (stored only when
+	// it replaces d_e); an unordered energy returns 0 like a small one.
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	const IVP_U_Float80 whole = fp.load(mutual_energizer_stack.whole_mutual_energy);
+	const IVP_U_Float80 maximum = fp.multiply(whole, fp.load((IVP_DOUBLE)MAX_ENERGY_DESTROY));
+	if (fp.compare(fp.load(d_e), maximum) == IVP_X87_Arithmetic::GREATER)
+		d_e = fp.store_double(maximum);
+	const IVP_X87_Arithmetic::Relation relation = fp.compare(whole, fp.load(P_DOUBLE_EPS));
+	if (relation == IVP_X87_Arithmetic::LESS || relation == IVP_X87_Arithmetic::UNORDERED)
+		return 0.0f;
+	mutual_energizer_stack.destroy_percent_energy(fp.store_double(fp.divide(fp.load(d_e), whole)));
+	return d_e;
+#else
 	IVP_DOUBLE max_energy_to_destroy = MAX_ENERGY_DESTROY * mutual_energizer_stack.whole_mutual_energy;
 	if (d_e > max_energy_to_destroy)
 	{
@@ -1854,6 +2033,7 @@ IVP_DOUBLE IVP_Friction_Core_Pair::destroy_mutual_energy(IVP_DOUBLE d_e)
 
 	mutual_energizer_stack.destroy_percent_energy(percent_energy_to_destroy);
 	return d_e;
+#endif
 }
 
 IVP_Friction_Core_Pair::~IVP_Friction_Core_Pair()
@@ -2058,6 +2238,32 @@ void IVP_Contact_Point::calc_virtual_mass_of_mindist()
 	{
 		core[i] = get_synapse(i)->get_object()->get_core();
 	}
+#if IVP_ENABLE_X87_EMULATION
+	// RVA 0x1D3D0: one moving core keeps 0xC200's ST result; two cores store
+	// both as doubles, then (m1*m0)/(m1+m0) and 1/m stay in ST until the float
+	// store. Retail has no P_DOUBLE_EPS guards here.
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	IVP_U_Float80 virt_mass;
+	if (core[0]->physical_unmoveable)
+	{
+		virt_mass = core[1]->calc_virt_mass_worst_case_extended(fp, &tmp_contact_info->contact_point_cs[1]);
+	}
+	else if (core[1]->physical_unmoveable)
+	{
+		virt_mass = core[0]->calc_virt_mass_worst_case_extended(fp, &tmp_contact_info->contact_point_cs[0]);
+	}
+	else
+	{
+		IVP_DOUBLE vmass_no_dir[2];
+		for (int j = 0; j < 2; j++)
+		{
+			vmass_no_dir[j] = fp.store_double(core[j]->calc_virt_mass_worst_case_extended(fp, &tmp_contact_info->contact_point_cs[j]));
+		}
+		virt_mass = fp.divide(fp.multiply(fp.load(vmass_no_dir[1]), fp.load(vmass_no_dir[0])),
+			fp.add(fp.load(vmass_no_dir[1]), fp.load(vmass_no_dir[0])));
+	}
+	this->inv_virt_mass_mindist_no_dir = fp.store_float(fp.divide(fp.load(1.0), virt_mass));
+#else
 	IVP_DOUBLE virt_mass_mindist_no_dir;
 	if (core[0]->physical_unmoveable)
 	{
@@ -2082,6 +2288,7 @@ void IVP_Contact_Point::calc_virtual_mass_of_mindist()
 	}
 	this->inv_virt_mass_mindist_no_dir = (virt_mass_mindist_no_dir > P_DOUBLE_EPS) ? (1.0f / virt_mass_mindist_no_dir) : 0.0f;
 	IVP_ASSERT(virt_mass_mindist_no_dir < 1e30f); // test for NaN
+#endif
 }
 
 inline IVP_FLOAT ivp_minimum(IVP_FLOAT a, IVP_FLOAT b)
@@ -2290,11 +2497,21 @@ void IVP_Friction_System::do_simulation_controller(IVP_Event_Sim *es, IVP_U_Vect
 		IVP_Contact_Point *cp = this->get_first_friction_dist();
 		// cp->recalc_friction_s_vals();
 
+#if IVP_ENABLE_X87_EMULATION
+		// Retail RVA 0x1D750: ((inv * pressure) * factor) * dt * dt in ST, one float store.
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		const IVP_U_Float80 dt = fp.load(es->delta_time);
+		const IVP_FLOAT max_local_spring_len = fp.store_float(fp.multiply(fp.multiply(fp.multiply(fp.multiply(
+			fp.load(cp->inv_virt_mass_mindist_no_dir), fp.load(cp->now_friction_pressure)), fp.load(cp->real_friction_factor)), dt), dt));
+
+		cp->calc_pretension(max_local_spring_len, IVP_FALSE);
+#else
 		// RVA 0x1D750 narrows only after both time factors, in this order.
 		IVP_FLOAT max_local_spring_len = IVP_DOUBLE(cp->inv_virt_mass_mindist_no_dir)
 			* cp->now_friction_pressure * cp->real_friction_factor * es->delta_time * es->delta_time;
 
 		cp->calc_pretension(max_local_spring_len);
+#endif
 
 		if (cp->two_friction_values != IVP_TRUE)
 		{

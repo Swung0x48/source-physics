@@ -42,10 +42,20 @@ IVP_RETURN_TYPE IVP_Friction_Solver::test_gauss_solution_suggestion(IVP_DOUBLE *
             IVP_DOUBLE push_val = push_results[i];
             // printf("gauss_value %f  ",push_val);
 
+#if IVP_ENABLE_X87_EMULATION
+            // retail 0x360E4: both sides of the compare stay in ST
+            const IVP_DOUBLE allowed_negative = IVP_MAX_ADHESION_GAUSS * l_environment->gravity_scalar; // debug output only
+            IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+            const IVP_X87_Arithmetic::Relation relation = fp.compare(
+                fp.multiply(fp.multiply(fp.load(info->inv_virtual_mass), fp.load(correct_x_factor)), fp.load(push_val)),
+                fp.multiply(fp.load(l_environment->gravity_scalar), fp.load(IVP_MAX_ADHESION_GAUSS)));
+            if (relation == IVP_X87_Arithmetic::LESS || relation == IVP_X87_Arithmetic::UNORDERED)
+#else
             IVP_DOUBLE allowed_negative = IVP_MAX_ADHESION_GAUSS * l_environment->gravity_scalar;
 
             // printf("allowed_negative %f\n",allowed_negative);
             if (allowed_negative > push_val * correct_x_factor * get_inv_virtual_mass(info))
+#endif
             {
                 IVP_IF((l_environment->debug_information->debug_friction) || 0)
                 {
@@ -82,10 +92,19 @@ IVP_RETURN_TYPE IVP_Friction_Solver::test_gauss_solution_suggestion(IVP_DOUBLE *
 void IVP_Friction_Solver::factor_result_vec()
 {
     int i;
+#if IVP_ENABLE_X87_EMULATION
+    // retail 0x36170: the product is rounded once by the store (64-bit precision first)
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    for (i = dist_change_mat.columns - 1; i >= 0; i--)
+    {
+        dist_change_mat.result_vector[i] = fp.store_double(fp.multiply(fp.load(correct_x_factor), fp.load(dist_change_mat.result_vector[i])));
+    }
+#else
     for (i = dist_change_mat.columns - 1; i >= 0; i--)
     {
         dist_change_mat.result_vector[i] *= correct_x_factor;
     }
+#endif
 }
 
 // Retail RVA 0x36190 is an independent matrix normalization call.
@@ -580,7 +599,15 @@ int IVP_Friction_Solver::do_resulting_pushes(IVP_Friction_System *fs)
     no_complex_done:
 
 #if !defined(IVP_DISTANCE_KEEPERS) && !defined(IVP_PANELTY_SOLVER)
+#if IVP_ENABLE_X87_EMULATION
+        {
+            // RVA 0x36679: impulse * i_delta_time in ST, fstp dword.
+            IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+            my_dist->now_friction_pressure = fp.store_float(fp.multiply(fp.load(impulse_now), fp.load(this->es->i_delta_time)));
+        }
+#else
         my_dist->now_friction_pressure = impulse_now * this->es->i_delta_time;
+#endif
 #else
         my_dist->now_friction_pressure +=
             impulse_now * this->es->i_delta_time; // keine Glaettung der Reibung
@@ -1042,13 +1069,21 @@ int IVP_Friction_Solver::calc_solver_PSI(IVP_Friction_System *fs, int *active_is
             const IVP_U_Float80 closing = fp.add(core->speed.dot_product_extended(fp, &info->surf_normal), fp.load(rotation));
             dist_velocity = fp.store_double(body == 0 ? closing : fp.subtract(fp.load(dist_velocity), closing));
         }
+        {
+            // RVA 0x36822: the gap difference and delay * gap + closing speed stay in ST, one store
+            const IVP_U_Float80 distance_off = fp.subtract(fp.load(ivp_mindist_settings.friction_dist), fp.load(info->friction.dist_len));
+            const IVP_X87_Arithmetic::Relation negative = fp.compare(distance_off, fp.load(0.0));
+            const IVP_U_Float80 delay = fp.load((negative == IVP_X87_Arithmetic::LESS || negative == IVP_X87_Arithmetic::UNORDERED)
+                                                    ? (IVP_DOUBLE)IVP_DESCENDING_SPEEDUP : 1.0);
+            dist_change_mat.desired_vector[i] = fp.store_double(fp.add(fp.multiply(delay, distance_off), fp.load(dist_velocity)));
+        }
 #else
         IVP_DOUBLE dist_velocity = info->get_closing_speed();
-#endif
 
         IVP_DOUBLE distance_off = ivp_mindist_settings.friction_dist - info->friction.dist_len; // distance to my optimal position
         dist_change_mat.desired_vector[i] =
             calc_desired_gap_speed(dist_velocity, distance_off, 1.0f);
+#endif
 
         // mark contact point as active if positive pressure
         {

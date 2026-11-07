@@ -272,7 +272,12 @@ class IVP_Contact_Point : public IVP_Contact_Point_Fast
     IVP_DOUBLE two_values_friction(IVP_U_Float_Point *real_world_friction_vec);
     IVP_DOUBLE get_and_set_real_friction_len(IVP_U_Float_Point *real_world_friction_vec);
 
+#if IVP_ENABLE_X87_EMULATION
+    // limit_as_float: retail 0x1BC20 stores len*len + P_FLOAT_RES as a float, 0x1D750 keeps it in ST
+    inline void calc_pretension(IVP_FLOAT len, IVP_BOOL limit_as_float = IVP_TRUE);
+#else
     inline void calc_pretension(IVP_FLOAT len);
+#endif
 
     IVP_Impact_Solver_Long_Term *get_lt() { return tmp_contact_info; };
 

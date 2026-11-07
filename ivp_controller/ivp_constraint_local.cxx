@@ -588,6 +588,41 @@ void IVP_Constraint_Local::do_simulation_controller(IVP_Event_Sim *es, IVP_U_Vec
 			m_fs_f_ws.vmult3(&dvRA_ws, &dRA_now_fs);
 
 			IVP_U_Point dv_fs;
+#if IVP_ENABLE_X87_EMULATION
+			// RVA 0x290C3-0x2922B: float differences stored as double; d_time * damp_factor_div_force
+			// and -force_factor * inv_dtime stay in ST, each component is computed in 80 bits and
+			// stored once (also in the limited-axis branch)
+			IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+			for (int i = 0; i < 3; i++)
+				dv_fs.k[i] = fp.store_double(fp.subtract(fp.load(v_pointA_fs.k[i]), fp.load(v_pointR_fs.k[i])));
+			const IVP_U_Float80 damp = fp.multiply(fp.load(d_time), fp.load(damp_factor_div_force));
+			for (int i = 0; i < 3; i++)
+				dvRA_fs.k[i] = fp.store_double(fp.add(fp.multiply(fp.load(dv_fs.k[i]), damp), fp.load(dRA_now_fs.k[i])));
+
+			for (int i = 0; i < 3; i++)
+				if (fixed[i] & IVP_CONSTRAINT_AXIS_LIMITED)
+				{
+					const IVP_FLOAT *border = NULL;
+					if (dvRA_fs.k[i] < borderleft_Rfs[i])
+						border = &borderleft_Rfs[i];
+					else if (!(dvRA_fs.k[i] <= borderright_Rfs[i])) // retail fcomp; test ah,1: unordered takes the right border
+						border = &borderright_Rfs[i];
+					if (border)
+					{
+						dvRA_fs.k[i] = fp.store_double(fp.add(
+							fp.multiply(fp.subtract(fp.load(dRA_now_fs.k[i]), fp.load(*border)), fp.load(limited_axis_stiffness)),
+							fp.multiply(fp.load(d_time), fp.load(dv_fs.k[i]))));
+						(int &)fixed[i] |= IVP_CONSTRAINT_AXIS_FIXED;
+					}
+					else
+					{
+						(int &)fixed[i] &= ~IVP_CONSTRAINT_AXIS_FIXED;
+					}
+				}
+			const IVP_U_Float80 force = fp.multiply(fp.negate(fp.load(force_factor)), fp.load(inv_dtime));
+			for (int i = 0; i < 3; i++)
+				dvRA_fs.k[i] = fp.store_double(fp.multiply(fp.load(dvRA_fs.k[i]), force));
+#else
 			dv_fs.subtract(&v_pointA_fs, &v_pointR_fs);
 			dvRA_fs.set(&dRA_now_fs);
 			dvRA_fs.add_multiple(&dv_fs, d_time * damp_factor_div_force);
@@ -614,6 +649,7 @@ void IVP_Constraint_Local::do_simulation_controller(IVP_Event_Sim *es, IVP_U_Vec
 					}
 				}
 			dvRA_fs.mult(-force_factor * inv_dtime);
+#endif
 		}
 
 		// Rotation: Attention: angles >  2 PI (questionable case)
@@ -630,6 +666,41 @@ void IVP_Constraint_Local::do_simulation_controller(IVP_Event_Sim *es, IVP_U_Vec
 		// drRA_fs still contains the value for rRA_rs.
 		{
 			IVP_U_Point drs_rs;
+#if IVP_ENABLE_X87_EMULATION
+			// RVA 0x29276-0x293F9: the same pattern as the translation block
+			IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+			for (int i = 0; i < 3; i++)
+				drs_rs.k[i] = fp.store_double(fp.subtract(fp.load(rA_rs.k[i]), fp.load(rR_rs.k[i])));
+			const IVP_U_Float80 damp = fp.multiply(fp.load(d_time), fp.load(damp_factor_div_force));
+			for (int i = 0; i < 3; i++)
+				drRA_rs.k[i] = fp.store_double(fp.add(fp.multiply(fp.load(drs_rs.k[i]), damp), fp.load(drRA_now_rs.k[i])));
+
+			for (int i = 0; i < 3; i++)
+			{
+				if (fixed[i + 3] & IVP_CONSTRAINT_AXIS_LIMITED)
+				{
+					const IVP_FLOAT *border = NULL;
+					if (drRA_rs.k[i] < borderleft_Rfs[i + 3])
+						border = &borderleft_Rfs[i + 3];
+					else if (!(drRA_rs.k[i] <= borderright_Rfs[i + 3])) // as above
+						border = &borderright_Rfs[i + 3];
+					if (border)
+					{
+						drRA_rs.k[i] = fp.store_double(fp.add(
+							fp.multiply(fp.subtract(fp.load(drRA_now_rs.k[i]), fp.load(*border)), fp.load(limited_axis_stiffness)),
+							fp.multiply(fp.load(d_time), fp.load(drs_rs.k[i]))));
+						(int &)fixed[i + 3] |= IVP_CONSTRAINT_AXIS_FIXED;
+					}
+					else
+					{
+						(int &)fixed[i + 3] &= ~IVP_CONSTRAINT_AXIS_FIXED;
+					}
+				}
+			}
+			const IVP_U_Float80 force = fp.multiply(fp.negate(fp.load(force_factor)), fp.load(inv_dtime));
+			for (int i = 0; i < 3; i++)
+				drRA_rs.k[i] = fp.store_double(fp.multiply(fp.load(drRA_rs.k[i]), force));
+#else
 			drs_rs.subtract(&rA_rs, &rR_rs);
 			drRA_rs.set(&drRA_now_rs);
 			drRA_rs.add_multiple(&drs_rs, d_time * damp_factor_div_force);
@@ -657,6 +728,7 @@ void IVP_Constraint_Local::do_simulation_controller(IVP_Event_Sim *es, IVP_U_Vec
 				}
 			}
 			drRA_rs.mult(-force_factor * inv_dtime);
+#endif
 		}
 		// the needed components (in RS and RS.rot) don't need to be extracted
 		// due to the selective dimension of the bahaviour matrix

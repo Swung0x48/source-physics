@@ -10,6 +10,7 @@
 
 #include <ivu_hash.hxx>
 #if IVP_ENABLE_X87_EMULATION
+#include <ivu_float.hxx>
 #include <ivu_x87.hxx>
 #endif
 
@@ -43,6 +44,17 @@ static inline IVP_DOUBLE ivp_event_real_coll(IVP_FLOAT radius)
     return fp.store_double(fp.add(fp.multiply(fp.load(radius), fp.load(0.5)), fp.load(ivp_mindist_settings.real_coll_dist)));
 #else
     return ivp_mindist_settings.real_coll_dist + radius * 0.5f;
+#endif
+}
+
+// The PK solvers' allowed penetration: the product and the sum stay on the x87 stack and are pushed as a double.
+static inline IVP_DOUBLE ivp_event_pk_real_coll(IVP_FLOAT radius)
+{
+#if IVP_ENABLE_X87_EMULATION
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    return fp.store_double(fp.add(fp.multiply(fp.load(radius), fp.load(0.9f)), fp.load(ivp_mindist_settings.real_coll_dist)));
+#else
+    return ivp_mindist_settings.real_coll_dist + radius * 0.9f;
 #endif
 }
 
@@ -385,11 +397,21 @@ void IVP_Mindist_Event_Solver::calc_next_event_PF(const IVP_Compact_Edge *P, con
     pf_npf_solver.hesse_of_area_object = pf_coll_solver.hesse_of_area_object;
     IVP_DOUBLE sec_dist; // gradient, which indicates a possible new collision
     {
+#if IVP_ENABLE_X87_EMULATION
+        // retail keeps the whole block on the x87 stack and stores sec_dist once
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_U_Float80 real_dist = fp.add(fp.multiply(fp.load(mindist->sum_extra_radius), fp.load(0.1f)),
+            fp.load(P_MIN(mindist->get_coll_dist(), IVP_DOUBLE(mindist->len_numerator))));
+        const IVP_U_Float80 gradient = fp.negate(fp.multiply(fp.load(ivp_mindist_settings.mindist_change_force_dist),
+            fp.load(m_cache_F->get_core()->inv_object_diameter)));
+        sec_dist = fp.store_double(fp.divide(fp.multiply(gradient, real_dist), fp.load(mindist->get_coll_dist())));
+#else
         IVP_DOUBLE real_dist = P_MIN(mindist->get_coll_dist(), mindist->len_numerator);
         real_dist += mindist->sum_extra_radius * 0.1f; // lazy sector change for extra radius
         sec_dist = -ivp_mindist_settings.mindist_change_force_dist * m_cache_F->get_core()->inv_object_diameter;
         sec_dist *= real_dist;
         sec_dist /= mindist->get_coll_dist();
+#endif
     }
     IVP_U_Point wHesseF;
     IVP_U_Point hesse_in_P_object;
@@ -496,10 +518,27 @@ IVP_DOUBLE IVP_3D_Solver_KK_COLL::get_value(IVP_U_Matrix *K_w_f_c, IVP_U_Matrix 
     IVP_U_Point H;
     H.calc_cross_product(&k_vec_world, &l_vec_world); // unscaled normal
 
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0x2B530: both dot products (z, y, x) and their difference in
+    // ST, res stored as a double; the square length (y, z, x) is stored as the
+    // float argument of isqrt_float (0xDAE0), whose extended result scales
+    // res and side in ST.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 h0 = fp.load(H.k[0]), h1 = fp.load(H.k[1]), h2 = fp.load(H.k[2]);
+    const IVP_U_Float80 k_dot = fp.add(fp.add(fp.multiply(h2, fp.load(k_point_world.k[2])),
+        fp.multiply(h1, fp.load(k_point_world.k[1]))), fp.multiply(fp.load(k_point_world.k[0]), h0));
+    const IVP_U_Float80 l_dot = fp.add(fp.add(fp.multiply(h2, fp.load(l_point_world.k[2])),
+        fp.multiply(h1, fp.load(l_point_world.k[1]))), fp.multiply(fp.load(l_point_world.k[0]), h0));
+    const IVP_DOUBLE res = fp.store_double(fp.subtract(k_dot, l_dot));
+    const IVP_FLOAT square = fp.store_float(fp.add(fp.add(fp.multiply(h1, h1), fp.multiply(h2, h2)), fp.multiply(h0, h0)));
+    return fp.return_double(fp.multiply(fp.multiply(IVP_Fast_Math::isqrt_extended(fp, double(square), 2),
+        fp.load(res)), fp.load(side)));
+#else
     IVP_DOUBLE res = H.dot_product(&k_point_world) - H.dot_product(&l_point_world);
     IVP_DOUBLE iH_len = IVP_Inline_Math::isqrt_float(H.quad_length()); // bad, but allows good estimate for first deviation
     res *= iH_len;
     return res * side;
+#endif
 }
 
 class IVP_3D_Solver_KK_PARALLEL : public IVP_3D_Solver
@@ -694,7 +733,15 @@ void IVP_Mindist_Event_Solver::calc_next_event_KK(const IVP_Compact_Edge *K,
 
         // when does point P 'collide' with plane F (no borders!) ?
         // consider extensions of edge
+#if IVP_ENABLE_X87_EMULATION
+        // Retail RVA 0x2BC7B: the float product in ST (fld, fmul, fchs), stored
+        // once as a double; C++ would round it to float first.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_DOUBLE sec_dist = fp.store_double(fp.negate(fp.multiply(fp.load(ivp_mindist_settings.mindist_change_force_dist),
+            fp.load(cache_e->core->inv_object_diameter))));
+#else
         IVP_DOUBLE sec_dist = -ivp_mindist_settings.mindist_change_force_dist * cache_e->core->inv_object_diameter;
+#endif
         ivp_u_bool found = solver_KK_PF.find_first_t_for_value_max_dev(sec_dist,
                                                                        t_now,
                                                                        event_time_out,
@@ -1041,7 +1088,7 @@ void IVP_Mindist_Event_Solver::calc_next_event_PK(const IVP_Compact_Edge *P,
 
         ivp_u_bool found =
             solver_pk_coll.find_first_t_for_value_coll(mindist->get_coll_dist() + radius,
-                                                       ivp_mindist_settings.real_coll_dist + radius * 0.9f,
+                                                       ivp_event_pk_real_coll(radius),
                                                        t_now,
                                                        t_max,
                                                        &cache_P,
@@ -1218,7 +1265,7 @@ void IVP_Mindist_Event_Solver::calc_next_event_BK(IVP_Ball *ball, const IVP_Comp
 
         ivp_u_bool found =
             solver_pk_coll.find_first_t_for_value_coll(mindist->get_coll_dist() + radius,
-                                                       ivp_mindist_settings.real_coll_dist + radius * 0.9f,
+                                                       ivp_event_pk_real_coll(radius),
                                                        t_now,
                                                        t_max,
                                                        &cache_P,

@@ -61,7 +61,8 @@ void IVP_Solver_Core_Reaction::init_trans_ws(const IVP_U_Point *pos_ws, IVP_Core
         const IVP_U_Float80 raw_z = ivp_translation_cross(fp, m_world_f_core, pos_rel_core, direction_ws[0], &cross_direction_position_cs[0]);
         cross_direction_position_cs[0].hesse_val = 1.0f;
         cr_mult_inv[0].set_line_wise_mult4(&cross_direction_position_cs[0], im);
-        const IVP_U_Float80 inertia_z = fp.multiply(raw_z, fp.load(im->k[2]));
+        // RVA 0x3367E: raw_z * im.z is spilled to a double (fstp qword) before both uses
+        const IVP_U_Float80 inertia_z = fp.load(fp.store_double(fp.multiply(raw_z, fp.load(im->k[2]))));
         cr_mult_inv[0].k[2] = fp.store_float(inertia_z);
         const IVP_U_Float80 inertia_y = fp.multiply(fp.multiply(fp.load(cross_direction_position_cs[0].k[1]), fp.load(im->k[1])), fp.load(cross_direction_position_cs[0].k[1]));
         IVP_U_Float80 diagonal = fp.add(inertia_y, fp.load(im->hesse_val));
@@ -84,8 +85,15 @@ void IVP_Solver_Core_Reaction::init_trans_ws(const IVP_U_Point *pos_ws, IVP_Core
 #endif
         m_velocity_ds_f_impulse_ds.set_elem(0, 0, val);
 
+#if IVP_ENABLE_X87_EMULATION
+        // (speed.dir + rot_speed.cross) * sign + delta, all in ST, one float store.
+        const IVP_U_Float80 a = fp.add(core->speed.dot_product_extended(fp, direction_ws[0]),
+                                       core->rot_speed.dot_product_extended(fp, &cross_direction_position_cs[0]));
+        delta_velocity_ds.k[0] = fp.store_float(fp.add(fp.multiply(a, fp.load(sign)), fp.load(delta_velocity_ds.k[0])));
+#else
         IVP_DOUBLE a = core->rot_speed.dot_product(&cross_direction_position_cs[0]) + core->speed.dot_product(direction_ws[0]);
         delta_velocity_ds.k[0] += a * sign;
+#endif
     }
 
     if (direction_ws[1])
@@ -100,6 +108,21 @@ void IVP_Solver_Core_Reaction::init_trans_ws(const IVP_U_Point *pos_ws, IVP_Core
 
         cr_mult_inv[1].set_line_wise_mult4(&cross_direction_position_cs[1], im);
 
+#if IVP_ENABLE_X87_EMULATION
+        // Retail RVA 0x3381E: both dot products and their sums with the matrix
+        // elements stay in ST until the double store; dot4 sums w, z, y, x.
+        const IVP_U_Point_4 &c1 = cross_direction_position_cs[1], &r1 = cr_mult_inv[1];
+        const IVP_U_Float80 dot4 = fp.add(fp.add(fp.add(fp.multiply(fp.load(r1.hesse_val), fp.load(c1.hesse_val)),
+                                                        fp.multiply(fp.load(r1.k[2]), fp.load(c1.k[2]))),
+                                                 fp.multiply(fp.load(r1.k[1]), fp.load(c1.k[1]))),
+                                          fp.multiply(fp.load(c1.k[0]), fp.load(r1.k[0])));
+        m_velocity_ds_f_impulse_ds.set_elem(1, 1, fp.store_double(fp.add(dot4, fp.load(m_velocity_ds_f_impulse_ds.get_elem(1, 1)))));
+        const IVP_U_Float80 dot01 = r1.dot_product_extended(fp, &cross_direction_position_cs[0]);
+        m_velocity_ds_f_impulse_ds.set_elem(0, 1, fp.store_double(fp.add(dot01, fp.load(m_velocity_ds_f_impulse_ds.get_elem(0, 1)))));
+
+        const IVP_U_Float80 a = fp.add(core->speed.dot_product_extended(fp, direction_ws[1]), c1.dot_product_extended(fp, &core->rot_speed));
+        delta_velocity_ds.k[1] = fp.store_float(fp.add(fp.multiply(fp.load(sign), a), fp.load(delta_velocity_ds.k[1])));
+#else
         IVP_DOUBLE val = m_velocity_ds_f_impulse_ds.get_elem(1, 1) + cr_mult_inv[1].dot_product4(cross_direction_position_cs[1]);
         m_velocity_ds_f_impulse_ds.set_elem(1, 1, val);
 
@@ -108,6 +131,7 @@ void IVP_Solver_Core_Reaction::init_trans_ws(const IVP_U_Point *pos_ws, IVP_Core
 
         IVP_DOUBLE a = core->rot_speed.dot_product(&cross_direction_position_cs[1]) + core->speed.dot_product(direction_ws[1]);
         delta_velocity_ds.k[1] += a * sign;
+#endif
     }
     else
     {

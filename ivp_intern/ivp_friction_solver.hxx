@@ -148,7 +148,15 @@ void IVP_Friction_Solver::async_apply_impulse(const IVP_Impact_Solver_Long_Term 
         IVP_U_Float_Point hp;
         hp.set_pairwise_mult(&info->contact_cross_nomal_cs[0], c0->get_inv_rot_inertia());
         c0->rot_speed_change.add_multiple(&hp, -impulse);
+#if IVP_ENABLE_X87_EMULATION
+        // RVA 0x3659B (inline in do_resulting_pushes): fld inv_mass; fmul
+        // impulse; fchs; fstp qword - the product rounds in ST, then to double.
+        IVP_X87_Arithmetic fp0(IVP_X87_Control::current());
+        c0->speed_change.add_multiple(&info->surf_normal,
+            fp0.store_double(fp0.negate(fp0.multiply(fp0.load(c0->get_inv_mass()), fp0.load(impulse)))));
+#else
         c0->speed_change.add_multiple(&info->surf_normal, -impulse * c0->get_inv_mass());
+#endif
     }
 
     IVP_Core *c1;
@@ -164,6 +172,14 @@ void IVP_Friction_Solver::async_apply_impulse(const IVP_Impact_Solver_Long_Term 
                 fp.load(c1->get_inv_rot_inertia()->k[0])) : fp.load(hp.k[axis]);
             c1->rot_speed_change.k[axis] = fp.store_float(fp.add(fp.load(c1->rot_speed_change.k[axis]), fp.multiply(inertia, fp.load(impulse))));
         }
+        // RVA 0x3660F: inv_mass*impulse stays in ST; y and z are spilled as
+        // doubles before the float stores, x goes straight to float.
+        const IVP_U_Float80 mass_impulse = fp.multiply(fp.load(c1->get_inv_mass()), fp.load(impulse));
+        const IVP_DOUBLE speed_y = fp.store_double(fp.add(fp.multiply(fp.load(info->surf_normal.k[1]), mass_impulse), fp.load(c1->speed_change.k[1])));
+        const IVP_DOUBLE speed_z = fp.store_double(fp.add(fp.multiply(fp.load(info->surf_normal.k[2]), mass_impulse), fp.load(c1->speed_change.k[2])));
+        c1->speed_change.k[0] = fp.store_float(fp.add(fp.multiply(fp.load(info->surf_normal.k[0]), mass_impulse), fp.load(c1->speed_change.k[0])));
+        c1->speed_change.k[1] = fp.store_float(fp.load(speed_y));
+        c1->speed_change.k[2] = fp.store_float(fp.load(speed_z));
 #else
         // RVA 0x364C0 retains the second core's X inertia product in x87;
         // only Y/Z pass through the float hp spills before the impulse.
@@ -171,8 +187,8 @@ void IVP_Friction_Solver::async_apply_impulse(const IVP_Impact_Solver_Long_Term 
             * c1->get_inv_rot_inertia()->k[0]) * impulse;
         c1->rot_speed_change.k[1] += IVP_DOUBLE(hp.k[1]) * impulse;
         c1->rot_speed_change.k[2] += IVP_DOUBLE(hp.k[2]) * impulse;
-#endif
         c1->speed_change.add_multiple(&info->surf_normal, impulse * c1->get_inv_mass());
+#endif
     }
 }
 

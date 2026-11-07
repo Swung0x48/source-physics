@@ -1232,6 +1232,24 @@ void IVP_U_Matrix3::init_normized3_col(const IVP_U_Point *vp, IVP_COORDINATE_IND
 {
     IVP_U_Point v0 = *vp;
     v0.normize();
+#if IVP_ENABLE_X87_EMULATION && !defined(IVP_NO_DOUBLE)
+    // RVA 0x0EB60: the differences are fsub/fstp qword; the cross product components
+    // a*b - c*d are computed in ST and stored once
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_U_Point v2(v0.k[1], fp.store_double(fp.subtract(fp.load(v0.k[2]), fp.load(v0.k[0]))), -v0.k[1]);
+    if (v2.normize() == IVP_FAULT)
+    {
+        v2.set(v0.k[2], -v0.k[2], fp.store_double(fp.subtract(fp.load(v0.k[1]), fp.load(v0.k[0]))));
+        v2.normize();
+    }
+    IVP_U_Point v1;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const int y = (axis + 1) % 3, z = (axis + 2) % 3;
+        v1.k[axis] = fp.store_double(fp.subtract(fp.multiply(fp.load(v2.k[y]), fp.load(v0.k[z])),
+            fp.multiply(fp.load(v2.k[z]), fp.load(v0.k[y]))));
+    }
+#else
     IVP_U_Point v2(v0.k[1], v0.k[2] - v0.k[0], -v0.k[1]);  // orthogonal vector
     if (v2.normize() == IVP_FAULT)
     {
@@ -1240,6 +1258,7 @@ void IVP_U_Matrix3::init_normized3_col(const IVP_U_Point *vp, IVP_COORDINATE_IND
     }
     IVP_U_Point v1;
     v1.inline_calc_cross_product(&v2, &v0);
+#endif
 
     unsigned int p[5] = {0, 1, 2, 0, 1};
     unsigned int i0 = coordinate;
@@ -1411,14 +1430,68 @@ void IVP_U_Matrix::init_rot_multiple(const IVP_U_Point *angles, IVP_DOUBLE facto
     set_elem(2, 2, u * x);
 }
 
+#if IVP_ENABLE_X87_EMULATION && !defined(IVP_NO_DOUBLE)
+// One element of a 3x3 product in retail's order: (p*q + r*s) + t*u in ST, one double store.
+static IVP_DOUBLE ivp_matrix_element(IVP_X87_Arithmetic &fp, IVP_DOUBLE p, IVP_DOUBLE q, IVP_DOUBLE r, IVP_DOUBLE s,
+    IVP_DOUBLE t, IVP_DOUBLE u)
+{
+    return fp.store_double(fp.add(fp.add(fp.multiply(fp.load(p), fp.load(q)), fp.multiply(fp.load(r), fp.load(s))),
+        fp.multiply(fp.load(t), fp.load(u))));
+}
+#endif
+
 void IVP_U_Matrix::mmult4(const IVP_U_Matrix *mb, IVP_U_Matrix *m_out) const
 {
+#if IVP_ENABLE_X87_EMULATION && !defined(IVP_NO_DOUBLE)
+    // RVA 0x0EC90: vmult3 (0x0F6F0) of mb's shift first; out = this * mb row by row,
+    // column 0 as (b00*a0 + b20*a2) + b10*a1, columns 1 and 2 as (b2c*a2 + b1c*a1) + b0c*a0;
+    // the shift is v + this.vv, one rounding per component
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_U_Point shift;
+    this->vmult3(&mb->vv, &shift);
+    IVP_DOUBLE out[3][3];
+    for (int r = 0; r < 3; ++r)
+    {
+        const IVP_DOUBLE a0 = get_elem(r, 0), a1 = get_elem(r, 1), a2 = get_elem(r, 2);
+        out[r][0] = ivp_matrix_element(fp, mb->get_elem(0, 0), a0, mb->get_elem(2, 0), a2, mb->get_elem(1, 0), a1);
+        for (int c = 1; c < 3; ++c)
+            out[r][c] = ivp_matrix_element(fp, mb->get_elem(2, c), a2, mb->get_elem(1, c), a1, mb->get_elem(0, c), a0);
+    }
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            m_out->set_elem(r, c, out[r][c]);
+    for (int k = 0; k < 3; ++k)
+        m_out->vv.k[k] = fp.store_double(fp.add(fp.load(shift.k[k]), fp.load(vv.k[k])));
+#else
     inline_mmult4(mb, m_out);
+#endif
 }
 
 void IVP_U_Matrix::mimult4(const IVP_U_Matrix *mb, IVP_U_Matrix *m_out) const
 {
+#if IVP_ENABLE_X87_EMULATION && !defined(IVP_NO_DOUBLE)
+    // RVA 0x0EDE0: the shift difference is stored as doubles and goes through inline_vimult3
+    // (0x0F760); out = this^T * mb with a = column r of this: column 0 as (b00*a0 + b20*a2) + b10*a1,
+    // column 1 as (b11*a1 + b21*a2) + b01*a0, column 2 as (b02*a0 + b22*a2) + b12*a1
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_U_Point difference;
+    for (int k = 0; k < 3; ++k)
+        difference.k[k] = fp.store_double(fp.subtract(fp.load(mb->vv.k[k]), fp.load(vv.k[k])));
+    this->vimult3(&difference, &m_out->vv);
+    IVP_DOUBLE out[3][3];
+    for (int r = 0; r < 3; ++r)
+    {
+        const IVP_DOUBLE a0 = get_elem(0, r), a1 = get_elem(1, r), a2 = get_elem(2, r);
+        out[r][0] = ivp_matrix_element(fp, mb->get_elem(0, 0), a0, mb->get_elem(2, 0), a2, mb->get_elem(1, 0), a1);
+        out[r][1] = ivp_matrix_element(fp, mb->get_elem(1, 1), a1, mb->get_elem(2, 1), a2, mb->get_elem(0, 1), a0);
+        out[r][2] = ivp_matrix_element(fp, mb->get_elem(0, 2), a0, mb->get_elem(2, 2), a2, mb->get_elem(1, 2), a1);
+    }
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            m_out->set_elem(r, c, out[r][c]);
+#else
     inline_mimult4(mb, m_out);
+#endif
 }
 
 #if IVP_ENABLE_X87_EMULATION
@@ -1507,7 +1580,24 @@ void IVP_U_Matrix3::mmult3(const IVP_U_Matrix3 *mb, IVP_U_Matrix3 *m_out) const
 
 void IVP_U_Matrix3::mimult3(const IVP_U_Matrix3 *mb, IVP_U_Matrix3 *m_out) const
 {
+#if IVP_ENABLE_X87_EMULATION && !defined(IVP_NO_DOUBLE)
+    // RVA 0x0EFE0: out = this^T * mb with a = column r of this: columns 0 and 2 as (b0c*a0 + b2c*a2) + b1c*a1,
+    // column 1 as (b01*a0 + b11*a1) + b21*a2
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_DOUBLE out[3][3];
+    for (int r = 0; r < 3; ++r)
+    {
+        const IVP_DOUBLE a0 = get_elem(0, r), a1 = get_elem(1, r), a2 = get_elem(2, r);
+        out[r][0] = ivp_matrix_element(fp, mb->get_elem(0, 0), a0, mb->get_elem(2, 0), a2, mb->get_elem(1, 0), a1);
+        out[r][1] = ivp_matrix_element(fp, mb->get_elem(0, 1), a0, mb->get_elem(1, 1), a1, mb->get_elem(2, 1), a2);
+        out[r][2] = ivp_matrix_element(fp, mb->get_elem(0, 2), a0, mb->get_elem(2, 2), a2, mb->get_elem(1, 2), a1);
+    }
+    for (int r = 0; r < 3; ++r)
+        for (int c = 0; c < 3; ++c)
+            m_out->set_elem(r, c, out[r][c]);
+#else
     inline_mimult3(mb, m_out);
+#endif
 }
 
 void IVP_U_Matrix::mi2mult4(const IVP_U_Matrix *mb, IVP_U_Matrix *m_out) const
@@ -1516,7 +1606,14 @@ void IVP_U_Matrix::mi2mult4(const IVP_U_Matrix *mb, IVP_U_Matrix *m_out) const
     this->mi2mult3(mb, m_out);
     IVP_U_Point v_shift_korr;
     m_out->vmult3(&mb->vv, &v_shift_korr);
+#if IVP_ENABLE_X87_EMULATION && !defined(IVP_NO_DOUBLE)
+    // RVA 0x0F107: fld/fsub/fstp qword per component (rounded in ST first)
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    for (int k = 0; k < 3; ++k)
+        m_out->vv.k[k] = fp.store_double(fp.subtract(fp.load(this->vv.k[k]), fp.load(v_shift_korr.k[k])));
+#else
     m_out->vv.subtract(&this->vv, &v_shift_korr);
+#endif
 }
 
 void IVP_U_Matrix3::mi2mult3(const IVP_U_Matrix3 *mb, IVP_U_Matrix3 *m_out) const

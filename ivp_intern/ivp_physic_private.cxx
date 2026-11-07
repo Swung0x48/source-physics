@@ -23,6 +23,9 @@
 #include <ivp_debug.hxx>
 #include <ivp_universe_manager.hxx>
 #include <ivp_authenticity.hxx>
+#if IVP_ENABLE_X87_EMULATION
+#include <ivu_x87.hxx>
+#endif
 
 void IVP_Listener_Collision::event_pre_collision(IVP_Event_Collision *) {}		  // the user app sould override this
 void IVP_Listener_Collision::event_post_collision(IVP_Event_Collision *) {}		  // the user app sould override this
@@ -697,11 +700,18 @@ void IVP_Friction_System::fs_recalc_all_contact_points()
 			IVP_Contact_Point *fr_mindist = my_pair->fr_dists.element_at(j);
 			IVP_FLOAT old_gap_len = fr_mindist->get_gap_length();
 			fr_mindist->recalc_friction_s_vals();
+#if IVP_ENABLE_X87_EMULATION
+			// Retail 0xB190: (old - new) * pressure + sum in ST, one float store per contact.
+			IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+			energy_diff_sum = fp.store_float(fp.add(fp.multiply(fp.subtract(fp.load(old_gap_len), fp.load(fr_mindist->get_gap_length())),
+				fp.load(fr_mindist->now_friction_pressure)), fp.load(energy_diff_sum)));
+#else
 			// energy considerations
 			// when gap is gettinger bigger, potential energy is gained
 			// when pressure is going up, do not mind
 			IVP_FLOAT gap_diff = old_gap_len - fr_mindist->get_gap_length();
 			energy_diff_sum += fr_mindist->now_friction_pressure * gap_diff;
+#endif
 		}
 		if (energy_diff_sum > 0.0f)
 		{

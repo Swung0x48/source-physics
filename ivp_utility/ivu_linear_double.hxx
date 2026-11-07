@@ -182,6 +182,16 @@ inline void IVP_U_Point::add_multiple(const IVP_U_Point *v1, const IVP_U_Point *
 inline void IVP_U_Point::add_multiple(const IVP_U_Point *v1, const IVP_U_Float_Point *v2, IVP_DOUBLE factor2)
 {
     // vector addition
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0x12470 (VC6 identical): fld float, fmul double factor, fadd double, fstp: rounded once.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_DOUBLE r[3];
+    for (int axis = 0; axis < 3; ++axis)
+        r[axis] = fp.store_double(fp.add(fp.multiply(fp.load(v2->k[axis]), fp.load(factor2)), fp.load(v1->k[axis])));
+    k[0] = r[0];
+    k[1] = r[1];
+    k[2] = r[2];
+#else
     IVP_DOUBLE a, b, c;
 
     a = v2->k[0] * factor2;
@@ -193,6 +203,7 @@ inline void IVP_U_Point::add_multiple(const IVP_U_Point *v1, const IVP_U_Float_P
     k[0] = a;
     k[1] = b;
     k[2] = c;
+#endif
 }
 
 inline void IVP_U_Point::set_pairwise_mult(const IVP_U_Point *v1, const IVP_U_Point *v2)

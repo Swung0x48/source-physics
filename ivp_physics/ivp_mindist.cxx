@@ -379,7 +379,9 @@ void IVP_Mindist::init_mindist(IVP_Real_Object *pop0, IVP_Real_Object *pop1, con
             // ball-ball contact on.  Order by the nocoll group ident, then
             // by name: keys both processes give the same objects.
 #ifdef IVP_PORTABLE_BMMO
-            if (ivp_ball_pair_order(pop0, pop1) < 0)
+            // Only inside a physics session (IVP_Environment::bmmo_physics); outside one the retail address order.
+            if (pop0->get_environment()->bmmo_physics ? ivp_ball_pair_order(pop0, pop1) < 0
+                                                                   : pop0->client_data < pop1->client_data)
 #else
             if (pop0->client_data < pop1->client_data)
 #endif
@@ -1192,6 +1194,49 @@ void IVP_Mindist::update_exact_mindist_events(IVP_BOOL allow_hull_conversion, IV
 
     if (mim.event_type_out != IVP_COLL_NONE)
     {
+#if IVP_ENABLE_X87_EMULATION
+        // RVA 0x17B51-0x17C96: every estimate stays in ST and is stored once; the delays are delta_PSI_time times
+        // float constants (base * 1e-4f etc., base is 1.0 in Ballance)
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_X87_Arithmetic::Relation soon = fp.compare(fp.subtract(fp.load(next_event.get_time()), fp.load(mim.t_now.get_time())),
+                                                             fp.load(IVP_DOUBLE(P_FLOAT_RES)));
+        if (soon == IVP_X87_Arithmetic::LESS || soon == IVP_X87_Arithmetic::UNORDERED)
+        { // maybe an error
+            if (event_hint == IVP_EH_NOW)
+            {
+                next_event = mim.t_now;
+            }
+            else
+            {
+                const IVP_U_Float80 mdist = fp.subtract(fp.load(len), fp.load(ivp_mindist_settings.real_coll_dist));
+                const IVP_X87_Arithmetic::Relation positive = fp.compare(mdist, fp.load(IVP_DOUBLE(P_DOUBLE_RES)));
+                const bool use_distance = positive == IVP_X87_Arithmetic::GREATER || positive == IVP_X87_Arithmetic::EQUAL;
+                const IVP_U_Float80 now = fp.load(env->get_current_time().get_time()), dpsi = fp.load(env->get_delta_PSI_time());
+                const IVP_U_Float80 base = fp.load(ivp_mindist_settings.event_queue_min_delta_time_base);
+                IVP_U_Float80 estimate;
+                if ((event_hint == IVP_EH_BIG_DELAY) || (mim.event_type_out & 0x0f))
+                {
+                    if (use_distance)
+                        estimate = fp.add(fp.add(fp.divide(mdist, fp.load(mim.worst_case_speed)), now),
+                                          fp.multiply(dpsi, fp.multiply(base, fp.load(1e-4f))));
+                    else
+                        estimate = fp.add(fp.multiply(dpsi, fp.multiply(base, fp.load(1e-3f))), now);
+                }
+                else
+                {
+                    if (use_distance)
+                        estimate = fp.add(fp.add(fp.divide(fp.multiply(mdist, fp.load(IVP_DOUBLE(0.1f))), fp.load(mim.worst_case_speed)), now),
+                                          fp.multiply(dpsi, fp.multiply(base, fp.load(1e-7f))));
+                    else
+                        estimate = fp.add(fp.multiply(dpsi, fp.multiply(base, fp.load(1e-5f))), now);
+                }
+                next_event = IVP_Time(fp.store_double(estimate));
+
+                if (next_event - env->get_next_PSI_time() >= 0.0f)
+                    return;
+            }
+        }
+#else
         if (next_event - mim.t_now < P_FLOAT_RES)
         { // maybe an error
             if (event_hint == IVP_EH_NOW)
@@ -1230,6 +1275,7 @@ void IVP_Mindist::update_exact_mindist_events(IVP_BOOL allow_hull_conversion, IV
                     return;
             }
         }
+#endif
 
         // insert real event in task manager
         IVP_Time_Manager *tm = env->get_time_manager();

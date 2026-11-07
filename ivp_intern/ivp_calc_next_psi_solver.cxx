@@ -54,19 +54,40 @@ inline void IVP_Calc_Next_PSI_Solver::calc_rotation_matrix(IVP_DOUBLE delta_sim_
     }
 
 
-    IVP_DOUBLE square_rot_speed = pc->rot_speed.quad_length(); // was already calculated in clip rot speed
     IVP_DOUBLE dt = delta_sim_time;
+#if IVP_ENABLE_X87_EMULATION
+    // RVA 0x1E46B: 0x1E7A0 returns the 80-bit square in ST0; qangle, the compare and the sqrt stay in ST
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    int steps = 1;
+    {
+        const IVP_U_Float80 qangle = fp.multiply(fp.multiply(pc->rot_speed.quad_length_extended(fp), fp.load(dt)), fp.load(dt));
+        // retail's constant (0x10063860) is 1/36 correctly rounded, 0x3F9C71C71C71C71C; the reconstruction's
+        // literal 0.02777777777777778 is one ulp higher
+        if (fp.compare(qangle, fp.load(1.0 / 36.0)) == IVP_X87_Arithmetic::GREATER)
+        {
+            // _ftol truncates the 80-bit root (the double store may round it up to the next integer)
+            const IVP_U_Float80 root = fp.square_root(fp.multiply(qangle, fp.load(144.0)));
+            int whole = (int)fp.store_double(root);
+            if (fp.compare(fp.load((int32_t)whole), root) == IVP_X87_Arithmetic::GREATER)
+                whole--;
+            steps = 1 + whole;
+            dt = fp.store_double(fp.divide(fp.load(dt), fp.load((int32_t)steps)));
+        }
+    }
+#else
+    IVP_DOUBLE square_rot_speed = pc->rot_speed.quad_length(); // was already calculated in clip rot speed
     IVP_DOUBLE qangle = square_rot_speed * dt * dt;
 
     // calc number of steps needed for dirty simulation
     int steps = 1;
     {
-        if (qangle > 0.02777777777777778)
+        if (qangle > 1.0 / 36.0) // retail 0x3F9C71C71C71C71C
         {
             steps = 1 + (int)IVP_Inline_Math::sqrtd(qangle * 144.0);
             dt /= IVP_DOUBLE(steps);
         }
     }
+#endif
     /* divide matrix into small rotational matrizes,
      * so that angle < .1f == 60 Steps per 360
      */
@@ -76,18 +97,38 @@ inline void IVP_Calc_Next_PSI_Solver::calc_rotation_matrix(IVP_DOUBLE delta_sim_
     const IVP_U_Float_Point *ri = pc->get_rot_inertia();
     const IVP_U_Float_Point *iri = pc->get_inv_rot_inertia();
 
+#if IVP_ENABLE_X87_EMULATION
+    // RVA 0x1E4C3: the float differences and products stay in ST, each value is stored once as a double
+    IVP_U_Point diff_other_rot_inertia_div_this;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        const int a = (axis + 1) % 3, b = (axis + 2) % 3;
+        diff_other_rot_inertia_div_this.k[axis] = fp.store_double(fp.multiply(
+            fp.subtract(fp.load(ri->k[a]), fp.load(ri->k[b])), fp.load(iri->k[axis])));
+    }
+#else
     IVP_U_Point diff_other_rot_inertia_div_this((ri->k[1] - ri->k[2]) * iri->k[0],
                                                 (ri->k[2] - ri->k[0]) * iri->k[1],
                                                 (ri->k[0] - ri->k[1]) * iri->k[2]);
+#endif
     for (int i = 1;; i++)
     {
         IVP_U_Float_Point hp;
+#if IVP_ENABLE_X87_EMULATION
+        // RVA 0x1E503: (w_b * w_a) * diff in 80 bits, pushed as a float argument of IVP_U_Float_Point::set
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            const int a = (axis + 1) % 3, b = (axis + 2) % 3;
+            hp.k[axis] = fp.store_float(fp.multiply(fp.multiply(fp.load(pc->rot_speed.k[b]), fp.load(pc->rot_speed.k[a])),
+                fp.load(diff_other_rot_inertia_div_this.k[axis])));
+        }
+#else
         hp.set(pc->rot_speed.k[1] * pc->rot_speed.k[2] * diff_other_rot_inertia_div_this.k[0],
                pc->rot_speed.k[2] * pc->rot_speed.k[0] * diff_other_rot_inertia_div_this.k[1],
                pc->rot_speed.k[0] * pc->rot_speed.k[1] * diff_other_rot_inertia_div_this.k[2]);
+#endif
 
 #if IVP_ENABLE_X87_EMULATION
-        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
         IVP_U_Float80 angular[3];
         for (int axis = 0; axis < 3; ++axis)
         {
@@ -193,9 +234,22 @@ void IVP_Calc_Next_PSI_Solver::calc_next_PSI_matrix(IVP_Event_Sim *event_sim, IV
     this->calc_rotation_matrix(simulation_delta_time, &q_core_f_core);
 
     { // update AT positions !!!!
+#if IVP_ENABLE_X87_EMULATION
+        // RVA 0x1E5AE keeps d_last_time in ST; each coordinate is
+        // fld float delta, fmul st(1), fadd double pos, fstp: rounded once.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_U_Float80 d_last_time = fp.subtract(fp.load(core->environment->get_current_time().get_seconds()),
+                                                      fp.load(core->time_of_last_psi.get_seconds()));
+        core->time_of_last_psi = core->environment->get_current_time();
+        for (int axis = 0; axis < 3; ++axis)
+            core->pos_world_f_core_last_psi.k[axis] = fp.store_double(fp.add(
+                fp.multiply(fp.load(core->delta_world_f_core_psis.k[axis]), d_last_time),
+                fp.load(core->pos_world_f_core_last_psi.k[axis])));
+#else
         IVP_DOUBLE d_last_time = core->environment->get_current_time() - core->time_of_last_psi;
         core->time_of_last_psi = core->environment->get_current_time();
         core->pos_world_f_core_last_psi.add_multiple(&core->delta_world_f_core_psis, d_last_time);
+#endif
         core->delta_world_f_core_psis.set(&core->speed);
 
         core->q_world_f_core_last_psi = core->q_world_f_core_next_psi;

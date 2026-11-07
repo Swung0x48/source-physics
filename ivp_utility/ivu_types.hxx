@@ -417,7 +417,7 @@ inline void P_MEM_CLEAR_ARRAY(T *clss, size_t elems) {
 #else
 #define IVP_PI 3.14159265358979323846   /* pi */
 #define IVP_PI_2 1.57079632679489661923 /* pi/2 */
-#define P_DOUBLE_MAX 1e20
+#define P_DOUBLE_MAX 1e101 // retail physics_RT (8 sites, e.g. 0x34C2F); the reconstruction had 1e20
 #define P_DOUBLE_RES 1E-12 // double resolution for numbers < 1.0
 #define IVP_3D_SOLVER_NULLSTELLE_EPS 1e-8
 #define P_DOUBLE_EPS 1e-19       // retail division/normalization cutoff

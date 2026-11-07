@@ -21,7 +21,10 @@ void IVP_Hull_Manager::check_hull_synapses(IVP_Environment *pEnv)
 
     // eventually throw hull limit exceeded event
     IVP_FLOAT syn_val;
-    int maxcnt = get_synapse_check_count(pEnv);
+    // Retail (commit_all_hull_managers 0x1EB2B, 0x1EBBB, 0x1EC41: mov edi, 0x64): at most 100 + 2 events per hull
+    // manager and PSI, the rest wait for the next PSI; the anomaly limit (default 1000) came with the Source port.
+    (void)pEnv;
+    int maxcnt = 100;
     while ((syn_val = sorted_synapses.find_min_value() - hull_value_next_psi) < 0.0f)
     { // no other synapses need to be checked
         // syn hull event is to be fired

@@ -87,9 +87,16 @@ inline void IVP_VecFPU::fpu_add_multiple_row(IVP_DOUBLE *target_adress, IVP_DOUB
 			target_adress[2] = c;
 			target_adress[3] = d;
 #else
+#if IVP_ENABLE_X87_EMULATION
+			// retail (block size 1, inlined e.g. in 0x359D0 / 0x36030): factor * source + target in ST, one
+			// rounding by the store
+			IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+			target_adress[0] = fp.store_double(fp.add(fp.multiply(fp.load(factor), fp.load(source_adress[0])), fp.load(target_adress[0])));
+#else
 			IVP_DOUBLE a = source_adress[0] * factor;
 			a += target_adress[0];
 			target_adress[0] = a;
+#endif
 #endif
 			target_adress += IVP_VECFPU_SIZE;
 			source_adress += IVP_VECFPU_SIZE;
@@ -97,6 +104,18 @@ inline void IVP_VecFPU::fpu_add_multiple_row(IVP_DOUBLE *target_adress, IVP_DOUB
 	}
 #endif
 }
+
+#if IVP_ENABLE_X87_EMULATION
+// retail (0x35F40, 0x35F90, 0x34340): the dot product runs from the last element, the sum starts at 0.0 in ST
+// and each product is added unrounded
+static inline IVP_U_Float80 ivp_x87_dot_down(IVP_X87_Arithmetic &fp, const IVP_DOUBLE *a, const IVP_DOUBLE *b, int size)
+{
+	IVP_U_Float80 sum = fp.load(0.0);
+	for (int i = size - 1; i >= 0; i--)
+		sum = fp.add(sum, fp.multiply(fp.load(a[i]), fp.load(b[i])));
+	return sum;
+}
+#endif
 
 // Retail 0x35F40 and 0x34340 accumulate the software dot from the last element.
 inline IVP_DOUBLE IVP_VecFPU::fpu_large_dot_product(IVP_DOUBLE *base_a, IVP_DOUBLE *base_b, int size, IVP_BOOL adress_aligned)
@@ -371,6 +390,18 @@ inline void IVP_VecFPU::fpu_set_row_to_zero(IVP_DOUBLE *target_adress, int size,
 IVP_RETURN_TYPE IVP_Great_Matrix_Many_Zero::matrix_check_unequation_line(int linenum)
 {
 	IVP_DOUBLE *dline = &matrix_values[aligned_row_len * linenum];
+#if IVP_ENABLE_X87_EMULATION
+	// retail 0x33D80: the row sum and |desired * eps| stay in ST for the compare
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	IVP_U_Float80 left_side = fp.load(0.0);
+	for (int i = 0; i < columns; i++)
+	{
+		left_side = fp.add(left_side, fp.multiply(fp.load(dline[i]), fp.load(result_vector[i])));
+	}
+	const IVP_U_Float80 eps = fp.absolute(fp.multiply(fp.load(desired_vector[linenum]), fp.load((IVP_DOUBLE)IVP_STATIC_FRICTION_TEST_EPS)));
+	const IVP_X87_Arithmetic::Relation relation = fp.compare(fp.add(eps, left_side), fp.load(desired_vector[linenum]));
+	if (relation != IVP_X87_Arithmetic::LESS && relation != IVP_X87_Arithmetic::UNORDERED)
+#else
 	IVP_DOUBLE left_side = 0.0f;
 	for (int i = 0; i < columns; i++)
 	{
@@ -378,6 +409,7 @@ IVP_RETURN_TYPE IVP_Great_Matrix_Many_Zero::matrix_check_unequation_line(int lin
 	}
 	IVP_DOUBLE eps = IVP_Inline_Math::fabsd(desired_vector[linenum] * IVP_STATIC_FRICTION_TEST_EPS);
 	if (left_side + eps >= desired_vector[linenum])
+#endif
 	{
 		return IVP_OK;
 	}
@@ -939,13 +971,24 @@ void IVP_Great_Matrix_Many_Zero::mult_aligned()
 	{
 		int i; // col
 		// walk through row
-		IVP_DOUBLE left_side = 0.0f;
 		IVP_DOUBLE *source = &matrix_values[j * aligned_row_len];
+#if IVP_ENABLE_X87_EMULATION
+		// retail 0x34270: the row sum stays in ST from 0.0, one rounding by the store
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		IVP_U_Float80 left_side = fp.load(0.0);
+		for (i = 0; i < columns; i++)
+		{
+			left_side = fp.add(left_side, fp.multiply(fp.load(desired_vector[i]), fp.load(source[i])));
+		}
+		result_vector[j] = fp.store_double(left_side);
+#else
+		IVP_DOUBLE left_side = 0.0f;
 		for (i = 0; i < columns; i++)
 		{
 			left_side += source[i] * desired_vector[i];
 		}
 		result_vector[j] = left_side;
+#endif
 	}
 }
 
@@ -976,10 +1019,22 @@ void IVP_Linear_Constraint_Solver::mult_active_x_for_accel()
 	int i, j;
 	for (i = r_actives; i < n_variables; i++)
 	{
-		IVP_DOUBLE sum = 0.0f;
 		int row_of_A = actives_inactives_ignored[i];
 		IVP_DOUBLE *row_vals = &full_solver_mat.matrix_values[row_of_A * aligned_size];
 		int real_pos;
+#if IVP_ENABLE_X87_EMULATION
+		// retail 0x342C0: the sum stays in ST from 0.0, the ignored column is added as is, one store
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		IVP_U_Float80 sum = fp.load(0.0);
+		for (j = 0; j < r_actives; j++)
+		{
+			real_pos = actives_inactives_ignored[j];
+			sum = fp.add(sum, fp.multiply(fp.load(delta_f[real_pos]), fp.load(row_vals[real_pos])));
+		}
+		real_pos = actives_inactives_ignored[ignored_pos];
+		delta_accel[row_of_A] = fp.store_double(fp.add(sum, fp.load(row_vals[real_pos])));
+#else
+		IVP_DOUBLE sum = 0.0f;
 		for (j = 0; j < r_actives; j++)
 		{
 			real_pos = actives_inactives_ignored[j];
@@ -988,6 +1043,7 @@ void IVP_Linear_Constraint_Solver::mult_active_x_for_accel()
 		real_pos = actives_inactives_ignored[ignored_pos];
 		sum += row_vals[real_pos] * 1.0f;
 		delta_accel[row_of_A] = sum;
+#endif
 	}
 }
 
@@ -996,8 +1052,14 @@ void IVP_Linear_Constraint_Solver::mult_x_with_full_A_minus_b()
 	for (int i = 0; i < n_variables; i++)
 	{
 		IVP_DOUBLE *base_a = &full_A[i * aligned_size];
+#if IVP_ENABLE_X87_EMULATION
+		// retail 0x34340: sum - b in ST, one store
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		temp[i] = fp.store_double(fp.subtract(ivp_x87_dot_down(fp, base_a, full_x, n_variables), fp.load(full_b[i])));
+#else
 		IVP_DOUBLE sum = IVP_VecFPU::fpu_large_dot_product(base_a, full_x, n_variables, IVP_TRUE);
 		temp[i] = sum - full_b[i];
+#endif
 	}
 }
 
@@ -1028,6 +1090,16 @@ IVP_BOOL IVP_Linear_Constraint_Solver::numerical_stability_ok()
 	}
 	for (k = r_actives; k < n_variables; k++)
 	{
+#if IVP_ENABLE_X87_EMULATION
+		{
+			// retail 0x343EB: |temp - accel| is compared in ST
+			IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+			const IVP_X87_Arithmetic::Relation r = fp.compare(fp.absolute(fp.subtract(fp.load(temp[actives_inactives_ignored[k]]),
+				fp.load(accel[actives_inactives_ignored[k]]))), fp.load(TEST_EPS));
+			if (r == IVP_X87_Arithmetic::GREATER)
+				return IVP_FALSE;
+		}
+#else
 		val = IVP_Inline_Math::fabsd(temp[actives_inactives_ignored[k]] - accel[actives_inactives_ignored[k]]);
 		IVP_IF(1)
 		{
@@ -1044,6 +1116,7 @@ IVP_BOOL IVP_Linear_Constraint_Solver::numerical_stability_ok()
 			}
 			return IVP_FALSE;
 		}
+#endif
 	}
 	IVP_IF(0)
 	{
@@ -1551,6 +1624,65 @@ IVP_RETURN_TYPE IVP_Linear_Constraint_Solver::solve_lc()
 			{
 				printf("errror_accel_ignored_negativ\n");
 			}
+#if IVP_ENABLE_X87_EMULATION
+			{
+				// retail 0x34C07-0x34D0B: products and quotients stay in ST for the compares, the chosen step is
+				// rounded by its store
+				IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+				const IVP_X87_Arithmetic::Relation reach = fp.compare(fp.multiply(fp.load(MAX_STEP_LEN), fp.load(delta_accel[ignored_full_index])),
+																	  fp.negate(fp.load(accel[ignored_full_index])));
+				if (reach == IVP_X87_Arithmetic::GREATER)
+				{
+					smallest_step = fp.store_double(fp.negate(fp.divide(fp.load(accel[ignored_full_index]), fp.load(delta_accel[ignored_full_index]))));
+					limiting_var = ignored_pos;
+				}
+				else
+				{
+					limiting_var = -1;
+					smallest_step = P_DOUBLE_MAX;
+				}
+				// smallest step of clamped
+				for (i = 0; i < r_actives; i++)
+				{
+					index = actives_inactives_ignored[i];
+					IVP_DOUBLE del_f = delta_f[index];
+					// retail tests C0 (fcom; test ah,1): an unordered compare counts as less, hence !(>=)
+					if (!(del_f >= -solver_eps))
+					{
+						const IVP_U_Float80 local_step = fp.negate(fp.divide(fp.load(full_x[index]), fp.load(del_f)));
+						const IVP_X87_Arithmetic::Relation tiny = fp.compare(fp.absolute(local_step), fp.load(solver_eps));
+						if ((tiny == IVP_X87_Arithmetic::LESS || tiny == IVP_X87_Arithmetic::UNORDERED) && !(full_x[index] >= solver_eps))
+						{
+							limiting_var = i;
+							smallest_step = fp.store_double(local_step);
+							goto limiting_var_found;
+						}
+						const IVP_X87_Arithmetic::Relation smaller = fp.compare(local_step, fp.add(fp.load(smallest_step), fp.load(solver_eps)));
+						if (smaller == IVP_X87_Arithmetic::LESS || smaller == IVP_X87_Arithmetic::UNORDERED)
+						{ // make it easier to move from active to inactive
+							smallest_step = fp.store_double(local_step);
+							limiting_var = i;
+						}
+					}
+				}
+				// smallest step of unclamped
+				for (i = r_actives; i < ignored_pos; i++)
+				{
+					index = actives_inactives_ignored[i];
+					IVP_DOUBLE del_a = delta_accel[index];
+					if (!(del_a >= -SOLVER_EPS)) // C0 as above
+					{
+						const IVP_U_Float80 local_step = fp.negate(fp.divide(fp.load(accel[index]), fp.load(del_a)));
+						const IVP_X87_Arithmetic::Relation smaller = fp.compare(local_step, fp.subtract(fp.load(smallest_step), fp.load(solver_eps)));
+						if (smaller == IVP_X87_Arithmetic::LESS || smaller == IVP_X87_Arithmetic::UNORDERED)
+						{ // make it harder to move from inactive to active
+							smallest_step = fp.store_double(local_step);
+							limiting_var = i;
+						}
+					}
+				}
+			}
+#else
 			if (-accel[ignored_full_index] < delta_accel[ignored_full_index] * MAX_STEP_LEN)
 			{
 				smallest_step = -accel[ignored_full_index] / delta_accel[ignored_full_index];
@@ -1620,6 +1752,7 @@ IVP_RETURN_TYPE IVP_Linear_Constraint_Solver::solve_lc()
 				}
 			}
 
+#endif
 			if (smallest_step < 0.0f)
 			{
 				IVP_IF(1)
@@ -1827,8 +1960,15 @@ void IVP_Linear_Constraint_Solver::update_step_vars(IVP_DOUBLE step_size)
 		{
 			printf("%f ", delta_accel[i]);
 		}
+#if IVP_ENABLE_X87_EMULATION
+		// retail 0x34F40: step * delta + value in ST, one rounding by each store
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		accel[i] = fp.store_double(fp.add(fp.multiply(fp.load(step_size), fp.load(delta_accel[i])), fp.load(accel[i])));
+		full_x[i] = fp.store_double(fp.add(fp.multiply(fp.load(step_size), fp.load(delta_f[i])), fp.load(full_x[i])));
+#else
 		accel[i] = accel[i] + step_size * delta_accel[i]; // Vector Optimization possible
 		full_x[i] = full_x[i] + step_size * delta_f[i];	  // dito
+#endif
 	}
 	IVP_IF(debug_lcs)
 	{
@@ -2630,9 +2770,17 @@ IVP_RETURN_TYPE IVP_Incr_L_U_Matrix::normize_row_L(int row_nr)
 	{
 		return IVP_FAULT;
 	}
+#if IVP_ENABLE_X87_EMULATION
+	// retail 0x35780: the reciprocal stays in ST, each element is rounded by its store
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	const IVP_U_Float80 reciprocal = fp.divide(fp.load(1.0), fp.load(val));
+	for (int i = 0; i < n_sub; ++i)
+		base[i] = fp.store_double(fp.multiply(reciprocal, fp.load(base[i])));
+#else
 	IVP_DOUBLE inv_val = 1.0f / val;
 
 	IVP_VecFPU::fpu_multiply_row(&base[0], inv_val, n_sub, IVP_FALSE); // should be TRUE
+#endif
 
 	base[row_nr] = 1.0f;
 	return IVP_OK;
@@ -2968,8 +3116,14 @@ void IVP_Incr_L_U_Matrix::mult_vec_with_L()
 	int i;
 	for (i = n_sub - 1; i >= 0; i--)
 	{
+#if IVP_ENABLE_X87_EMULATION
+		// retail 0x35F40
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		temp_vec[i] = fp.store_double(ivp_x87_dot_down(fp, &L_matrix[i * aligned_row_len], &mult_vec[0], n_sub));
+#else
 		IVP_DOUBLE sum = IVP_VecFPU::fpu_large_dot_product(&L_matrix[i * aligned_row_len], &mult_vec[0], n_sub, IVP_TRUE);
 		temp_vec[i] = sum;
+#endif
 	}
 }
 
@@ -2978,6 +3132,18 @@ void IVP_Incr_L_U_Matrix::solve_vec_with_U()
 	int i;
 	for (i = n_sub - 1; i >= 0; i--)
 	{
+#if IVP_ENABLE_X87_EMULATION
+		// retail 0x35F90: the sum runs from the last column down in ST, temp[i] - sum is stored to both vectors
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		IVP_U_Float80 sum = fp.load(0.0);
+		for (int j = n_sub - 1; j > i; j--)
+		{
+			sum = fp.add(sum, fp.multiply(fp.load(temp_vec[j]), fp.load(U_matrix[i * aligned_row_len + j])));
+		}
+		const IVP_DOUBLE res = fp.store_double(fp.subtract(fp.load(temp_vec[i]), sum));
+		temp_vec[i] = res;
+		out_vec[i] = res;
+#else
 		// #if !defined(IVP_WILLAMETTE)
 		IVP_DOUBLE leftsum = 0.0f;
 		int j;
@@ -3000,6 +3166,7 @@ void IVP_Incr_L_U_Matrix::solve_vec_with_U()
 		IVP_DOUBLE res = temp_vec[i] - leftsum;
 		temp_vec[i] = res;
 		out_vec[i] = res;
+#endif
 	}
 }
 

@@ -216,6 +216,20 @@ void IVP_SurfaceManager_Polygon::get_radius_and_radius_dev_to_given_center(
     IVP_FLOAT *radius,
     IVP_FLOAT *radius_deviation) const
 {
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0xBC40: the differences, (dz*dz + dy*dy) + dx*dx and the
+    // sqrt stay in ST; the deviation is (factor * upper_limit_radius) * 0.004f,
+    // also in ST, and both results are stored straight as floats.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 dx = fp.subtract(fp.load(compact_surface->mass_center.k[0]), fp.load(center->k[0]));
+    const IVP_U_Float80 dy = fp.subtract(fp.load(compact_surface->mass_center.k[1]), fp.load(center->k[1]));
+    const IVP_U_Float80 dz = fp.subtract(fp.load(compact_surface->mass_center.k[2]), fp.load(center->k[2]));
+    const IVP_U_Float80 center_shift = fp.square_root(fp.add(fp.add(fp.multiply(dz, dz), fp.multiply(dy, dy)), fp.multiply(dx, dx)));
+    const IVP_U_Float80 upper = fp.load(compact_surface->upper_limit_radius);
+    *radius = fp.store_float(fp.add(upper, center_shift));
+    const IVP_U_Float80 factor = fp.load((int32_t)compact_surface->max_factor_surface_deviation);
+    *radius_deviation = fp.store_float(fp.add(fp.multiply(fp.multiply(factor, upper), fp.load(IVP_COMPACT_SURFACE_DEVIATION_STEP_SIZE)), center_shift));
+#else
     IVP_U_Float_Point mass_center;
     mass_center.set(compact_surface->mass_center.k);
 
@@ -226,6 +240,7 @@ void IVP_SurfaceManager_Polygon::get_radius_and_radius_dev_to_given_center(
                             * IVP_COMPACT_SURFACE_DEVIATION_STEP_SIZE
                             * compact_surface->upper_limit_radius
                         + center_shift;
+#endif
 }
 
 const IVP_Compact_Ledge *IVP_SurfaceManager_Polygon::get_single_convex() const

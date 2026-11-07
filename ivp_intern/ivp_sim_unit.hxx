@@ -45,7 +45,7 @@ public:
     // froze the same ball a few PSIs apart.  First check after
     // IVP_MOVEMENT_CHECK_COUNT PSIs like the retail environment, then every
     // 17 PSIs (retail rolled 15..19).  Only while a networked physics session
-    // runs (IVP_Environment::bmmo_unit_movement_check); outside one the retail
+    // runs (IVP_Environment::bmmo_physics); outside one the retail
     // counter decides, as the 2002 DLL does (a TAS replays only that way).
     enum { MOVEMENT_CHECK_FIRST = 10, MOVEMENT_CHECK_PERIOD = 17 };
     short next_movement_check;

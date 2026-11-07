@@ -403,10 +403,12 @@ public:
     int environment_magic_number; // to detect if environment is valid (debug reasons)
 
 #ifdef IVP_PORTABLE_BMMO
-    // BallanceMMO engine change #5 (ivp_sim_unit.hxx): IVP_TRUE while a networked physics session runs, when every
-    // unit's movement check follows its own countdown; IVP_FALSE (the default) keeps the retail schedule, this
-    // environment's single counter, so a game outside a session simulates as the original does.
-    IVP_BOOL bmmo_unit_movement_check;
+    // BallanceMMO: IVP_TRUE while a networked physics session runs.  Then the engine changes that exist because the
+    // retail design cannot be consistent across machines apply: #5 (ivp_sim_unit.hxx, every unit's movement check on
+    // its own countdown) and #7 (ivp_mindist.cxx, ball-ball pairs ordered by name).  IVP_FALSE (the default) keeps
+    // the retail logic (this environment's single counter, the heap-address order), so a game outside a session
+    // simulates as the 2002 DLL does.
+    IVP_BOOL bmmo_physics;
 #endif
 };
 

@@ -191,7 +191,8 @@ IVP_U_Float80 IVP_Core::calc_virt_mass_worst_case_extended(IVP_X87_Arithmetic &f
     IVP_U_Float80 maximum = sums[0];
     if (fp.compare(sums[1], maximum) == IVP_X87_Arithmetic::GREATER) maximum = sums[1];
     if (fp.compare(sums[2], maximum) == IVP_X87_Arithmetic::GREATER) maximum = sums[2];
-    return fp.divide(fp.load(1.0), fp.add(maximum, fp.load(pinned ? 1.0f : get_inv_mass())));
+    // retail 0xC28C adds inv_mass unconditionally (the pinned case, @@CBPIN, came with the Source port)
+    return fp.divide(fp.load(1.0), fp.add(maximum, fp.load(get_inv_mass())));
 }
 #endif
 
@@ -215,16 +216,8 @@ IVP_DOUBLE IVP_Core::calc_virt_mass_worst_case(const IVP_U_Float_Point *core_poi
     {
         max_of_coords = worst_direction.k[2];
     }
-    IVP_DOUBLE dv;
-
-    if (!pinned) //@@CBPIN
-    {
-        dv = this->get_inv_mass() + max_of_coords;
-    }
-    else
-    {
-        dv = 1.0f + max_of_coords;
-    }
+    // retail 0xC28C: no pinned case (@@CBPIN came with the Source port)
+    IVP_DOUBLE dv = this->get_inv_mass() + max_of_coords;
 
     IVP_DOUBLE ret = 1.0f / dv;
     IVP_ASSERT(ret < 1e31f); // OG test for NaN

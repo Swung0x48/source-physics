@@ -831,11 +831,31 @@ void IVP_U_Quat::set_invert_mult(const IVP_U_Quat *q1, const IVP_U_Quat *q2)
     q.set_invert_unit_quat(q1);
     // RVA 0x19620 inlines a different accumulation order from the ordinary
     // quaternion multiply at 0x1E7C0. It matters for small relative rotations.
+#if IVP_ENABLE_X87_EMULATION
+    // Retail 0x19620: every component is summed in ST and rounded once, at its
+    // double store (zz, ww through a double temporary, xx, yy straight to res).
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 yy = fp.subtract(fp.add(fp.add(
+        fp.multiply(fp.load(q.z), fp.load(q2->x)), fp.multiply(fp.load(q.y), fp.load(q2->w))),
+        fp.multiply(fp.load(q.w), fp.load(q2->y))), fp.multiply(fp.load(q.x), fp.load(q2->z)));
+    const IVP_U_Float80 zz = fp.subtract(fp.add(fp.add(
+        fp.multiply(fp.load(q.w), fp.load(q2->z)), fp.multiply(fp.load(q.z), fp.load(q2->w))),
+        fp.multiply(fp.load(q.x), fp.load(q2->y))), fp.multiply(fp.load(q.y), fp.load(q2->x)));
+    const IVP_U_Float80 ww = fp.subtract(fp.subtract(fp.subtract(
+        fp.multiply(fp.load(q.w), fp.load(q2->w)), fp.multiply(fp.load(q.x), fp.load(q2->x))),
+        fp.multiply(fp.load(q.y), fp.load(q2->y))), fp.multiply(fp.load(q.z), fp.load(q2->z)));
+    const IVP_U_Float80 xx = fp.subtract(fp.add(fp.add(
+        fp.multiply(fp.load(q.y), fp.load(q2->z)), fp.multiply(fp.load(q.w), fp.load(q2->x))),
+        fp.multiply(fp.load(q.x), fp.load(q2->w))), fp.multiply(fp.load(q.z), fp.load(q2->y)));
+    res->x = fp.store_double(xx); res->y = fp.store_double(yy);
+    res->z = fp.store_double(zz); res->w = fp.store_double(ww);
+#else
     const IVP_DOUBLE yy=q.z*q2->x+q.y*q2->w+q.w*q2->y-q.x*q2->z;
     const IVP_DOUBLE zz=q.w*q2->z+q.z*q2->w+q.x*q2->y-q.y*q2->x;
     const IVP_DOUBLE ww=q.w*q2->w-q.x*q2->x-q.y*q2->y-q.z*q2->z;
     const IVP_DOUBLE xx=q.y*q2->z+q.w*q2->x+q.x*q2->w-q.z*q2->y;
     res->x=xx; res->y=yy; res->z=zz; res->w=ww;
+#endif
 }
 
 #if 0
