@@ -145,6 +145,9 @@ public:
 #endif
     IVP_DOUBLE fast_real_length() const;                                  // real length with 0.1f% error, really fast
     IVP_DOUBLE real_length_plus_normize();                                // Normize vector and return former real length.
+#if IVP_ENABLE_X87_EMULATION
+    IVP_U_Float80 real_length_plus_normize_extended(IVP_X87_Arithmetic &fp); // the same, the length unrounded
+#endif
     inline IVP_DOUBLE quad_distance_to(const IVP_U_Float_Point *p) const; // quad distance from this point to another
 
     IVP_RETURN_TYPE normize();      // normize vector (-> real_length == 1.0f)
@@ -244,6 +247,9 @@ public:
     IVP_U_Float80 dot_product_extended(IVP_X87_Arithmetic &fp, const IVP_U_Point *point) const;
 #endif
     IVP_DOUBLE real_length_plus_normize(); // Normize vector and return former real length.
+#if IVP_ENABLE_X87_EMULATION
+    IVP_U_Float80 real_length_plus_normize_extended(IVP_X87_Arithmetic &fp); // the same, the length unrounded
+#endif
     IVP_DOUBLE fast_real_length() const;   // Returns real length with max. 0.1f% error, really fast if in cache.
     IVP_RETURN_TYPE normize();             // Normize vector (-> real length == 1.0f), return IVP_FALSE if length too small.
     IVP_RETURN_TYPE fast_normize();        // Normize vector (0.1f% error)
@@ -366,6 +372,9 @@ public:
     // store it in a float still narrow it; friction consumes it as a double.
     static IVP_DOUBLE isqrt_float(IVP_FLOAT quad);
     static IVP_DOUBLE isqrt_double(IVP_DOUBLE quad); //   "
+#if IVP_ENABLE_X87_EMULATION
+    static IVP_U_Float80 isqrt_double_extended(IVP_X87_Arithmetic &fp, IVP_DOUBLE quad); // unrounded
+#endif
 
     static inline int int_div_2(int a); // workaround for compiler bug in CodeWarrior1.6
 

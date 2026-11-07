@@ -71,6 +71,14 @@ IVP_DOUBLE IVP_Inline_Math::isqrt_double(IVP_DOUBLE quad)
     return IVP_Fast_Math::isqrt(quad, 3);
 }
 
+#if IVP_ENABLE_X87_EMULATION
+// 0x0DB80 returns the inverse root in ST0, unrounded
+IVP_U_Float80 IVP_Inline_Math::isqrt_double_extended(IVP_X87_Arithmetic &fp, IVP_DOUBLE quad)
+{
+    return IVP_Fast_Math::isqrt_extended(fp, quad, 3);
+}
+#endif
+
 #if !defined(IVP_NO_DOUBLE)
 void IVP_U_Point::set_interpolate(const IVP_U_Point *p0, const IVP_U_Point *p1, IVP_DOUBLE s)
 {
@@ -222,6 +230,16 @@ IVP_RETURN_TYPE IVP_U_Point::fast_normize()
 #endif
 }
 
+#if IVP_ENABLE_X87_EMULATION
+// 0x0DE30 returns the former length in ST0, unrounded (0 below P_DOUBLE_EPS)
+IVP_U_Float80 IVP_U_Point::real_length_plus_normize_extended(IVP_X87_Arithmetic &fp)
+{
+    IVP_U_Float80 length;
+    ivp_point_normize(fp, this, 3, &length);
+    return length;
+}
+#endif
+
 IVP_DOUBLE IVP_U_Point::real_length_plus_normize()
 {
 #if IVP_ENABLE_X87_EMULATION
@@ -240,6 +258,16 @@ IVP_DOUBLE IVP_U_Point::real_length_plus_normize()
     this->mult(f);
     return f * qlength;  // qlength * f;
 #endif
+}
+#endif
+
+#if IVP_ENABLE_X87_EMULATION
+// 0x0DF30, as the double version
+IVP_U_Float80 IVP_U_Float_Point::real_length_plus_normize_extended(IVP_X87_Arithmetic &fp)
+{
+    IVP_U_Float80 length;
+    ivp_point_normize(fp, this, 3, &length);
+    return length;
 }
 #endif
 
@@ -390,6 +418,39 @@ void IVP_U_Point::solve_quadratic_equation_fast(const IVP_U_Point *p)
 
 void IVP_U_Point::solve_quadratic_equation_accurate(const IVP_U_Point *p)
 {  // points stores quadratic equ. k[2] + x*k[1] * x^2 * k[0]
+#if IVP_ENABLE_X87_EMULATION
+    // 0x0E300: the discriminant is compared from the register but its root is taken from the stored k[0];
+    // l2 = (sr - p1) / 2a uses the register root, l1 = (-p1 - sr) / 2a the root stored as a double.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 eps = fp.load(P_DOUBLE_EPS);
+    const IVP_U_Float80 a = fp.load(p->k[0]), b = fp.load(p->k[1]), c = fp.load(p->k[2]);
+    IVP_X87_Arithmetic::Relation relation = fp.compare(fp.absolute(a), eps);
+    if (relation == IVP_X87_Arithmetic::LESS || relation == IVP_X87_Arithmetic::UNORDERED)
+    {  // linear equation
+        k[0] = 0;
+        relation = fp.compare(fp.absolute(b), eps);
+        if (relation == IVP_X87_Arithmetic::LESS || relation == IVP_X87_Arithmetic::UNORDERED)
+        {
+            k[0] = -1.0f;  // no result
+            return;
+        }
+        k[2] = fp.store_double(fp.negate(fp.divide(c, b)));
+        k[1] = k[2];
+        return;
+    }
+    const IVP_U_Float80 discriminant = fp.subtract(fp.multiply(b, b), fp.multiply(fp.multiply(c, a), fp.load(4.0)));
+    k[0] = fp.store_double(discriminant);
+    relation = fp.compare(discriminant, fp.load(0.0));
+    if (relation == IVP_X87_Arithmetic::LESS || relation == IVP_X87_Arithmetic::UNORDERED)
+        return;
+    const IVP_U_Float80 i2a = fp.divide(fp.load(0.5), a);
+    const IVP_U_Float80 sr = fp.square_root(fp.load(k[0]));
+    const IVP_DOUBLE sr_stored = fp.store_double(sr);
+    const IVP_U_Float80 l2 = fp.multiply(fp.subtract(sr, b), i2a);
+    const IVP_U_Float80 l1 = fp.multiply(fp.subtract(fp.negate(b), fp.load(sr_stored)), i2a);
+    k[1] = fp.store_double(l1);
+    k[2] = fp.store_double(l2);
+#else
     if (IVP_Inline_Math::fabsd(p->k[0]) < P_DOUBLE_EPS)
     {  // linear equation
         k[0] = 0;
@@ -413,6 +474,7 @@ void IVP_U_Point::solve_quadratic_equation_accurate(const IVP_U_Point *p)
         k[1] = l1;
         k[2] = l2;
     }
+#endif
 }
 
 IVP_BOOL IVP_U_Point::is_parallel(const IVP_U_Point *v_in, IVP_DOUBLE eps) const
@@ -791,8 +853,48 @@ void IVP_U_Hesse::mult_hesse(IVP_DOUBLE factor)
     hesse_val *= factor;
 }
 
+#if IVP_ENABLE_X87_EMULATION
+static void ivp_store_coordinate(IVP_X87_Arithmetic &fp, IVP_DOUBLE *out, const IVP_U_Float80 &value)
+{
+    *out = fp.store_double(value);
+}
+
+static void ivp_store_coordinate(IVP_X87_Arithmetic &fp, IVP_FLOAT *out, const IVP_U_Float80 &value)
+{
+    *out = fp.store_float(value);
+}
+
+// The 2002 DLL's calc_hesse (0x0E5C0, 0x0E680, 0x0E7F0): the edge tp1 - tp0 stays on the x87 stack, the edge
+// tp2 - tp0 is stored as doubles; the normal's components are stored in the plane's own type, and the plane
+// distance -((c2 * p2 + k1 * p1) + k0 * p0) takes the last component from the register, not from k[2].
+template <class Hesse, class Point>
+static void ivp_calc_hesse(Hesse *hesse, const Point *tp0, const Point *tp1, const Point *tp2)
+{
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_U_Float80 origin[3], a[3], b[3];
+    for (int axis = 0; axis < 3; ++axis)
+        origin[axis] = fp.load(tp0->k[axis]);
+    for (int axis = 0; axis < 3; ++axis)
+        a[axis] = fp.subtract(fp.load(tp1->k[axis]), origin[axis]);
+    for (int axis = 0; axis < 3; ++axis)
+        b[axis] = fp.load(fp.store_double(fp.subtract(fp.load(tp2->k[axis]), origin[axis])));
+    const IVP_U_Float80 c0 = fp.subtract(fp.multiply(b[1], a[2]), fp.multiply(b[2], a[1]));
+    const IVP_U_Float80 c1 = fp.subtract(fp.multiply(b[2], a[0]), fp.multiply(b[0], a[2]));
+    const IVP_U_Float80 c2 = fp.subtract(fp.multiply(b[0], a[1]), fp.multiply(b[1], a[0]));
+    ivp_store_coordinate(fp, &hesse->k[0], c0);
+    ivp_store_coordinate(fp, &hesse->k[1], c1);
+    ivp_store_coordinate(fp, &hesse->k[2], c2);
+    const IVP_U_Float80 distance = fp.add(fp.add(fp.multiply(c2, origin[2]),
+        fp.multiply(fp.load(hesse->k[1]), origin[1])), fp.multiply(fp.load(hesse->k[0]), origin[0]));
+    ivp_store_coordinate(fp, &hesse->hesse_val, fp.negate(distance));
+}
+#endif
+
 void IVP_U_Hesse::calc_hesse(const IVP_U_Point *tp0, const IVP_U_Point *tp1, const IVP_U_Point *tp2)
 {
+#if IVP_ENABLE_X87_EMULATION
+    ivp_calc_hesse(this, tp0, tp1, tp2);
+#else
     IVP_DOUBLE a0, a1, a2, b0, b1, b2;
 
     // calculate (non-normized) normal
@@ -815,12 +917,16 @@ void IVP_U_Hesse::calc_hesse(const IVP_U_Point *tp0, const IVP_U_Point *tp1, con
     this->k[1] = c1;
     this->k[2] = c2;
     this->hesse_val = -(this->k[0] * fp0 + this->k[1] * fp1 + this->k[2] * fp2);
+#endif
 };
 
 void IVP_U_Hesse::calc_hesse(const IVP_U_Float_Point *tp0,
                              const IVP_U_Float_Point *tp1,
                              const IVP_U_Float_Point *tp2)
 {
+#if IVP_ENABLE_X87_EMULATION
+    ivp_calc_hesse(this, tp0, tp1, tp2);
+#else
     IVP_DOUBLE a0, a1, a2, b0, b1, b2;
 
     // calculate (non-normized) normal
@@ -843,6 +949,7 @@ void IVP_U_Hesse::calc_hesse(const IVP_U_Float_Point *tp0,
     this->k[1] = c1;
     this->k[2] = c2;
     this->hesse_val = -(this->k[0] * fp0 + this->k[1] * fp1 + this->k[2] * fp2);
+#endif
 };
 
 void IVP_U_Hesse::normize()
@@ -875,6 +982,9 @@ void IVP_U_Float_Hesse::proj_on_plane(const IVP_U_Float_Point *p, IVP_U_Float_Po
 
 void IVP_U_Float_Hesse::calc_hesse(const IVP_U_Float_Point *tp0, const IVP_U_Float_Point *tp1, const IVP_U_Float_Point *tp2)
 {
+#if IVP_ENABLE_X87_EMULATION
+    ivp_calc_hesse(this, tp0, tp1, tp2);
+#else
     IVP_DOUBLE a0, a1, a2, b0, b1, b2;
 
     // calculate (non-normized) normal
@@ -897,6 +1007,7 @@ void IVP_U_Float_Hesse::calc_hesse(const IVP_U_Float_Point *tp0, const IVP_U_Flo
     this->k[1] = (IVP_FLOAT)c1;
     this->k[2] = (IVP_FLOAT)c2;
     this->hesse_val = (IVP_FLOAT) - (this->k[0] * fp0 + this->k[1] * fp1 + this->k[2] * fp2);
+#endif
 };
 
 void IVP_U_Float_Hesse::calc_hesse_val(const IVP_U_Float_Point *p0)
@@ -1500,18 +1611,57 @@ void IVP_U_Matrix::vimult4(const IVP_U_Point *p_in, IVP_U_Float_Point *p_out) co
 };
 void IVP_U_Matrix::vimult4(const IVP_U_Point *p_in, IVP_U_Point *p_out) const
 {
+#if IVP_ENABLE_X87_EMULATION
+    // 0x0F3E0: the translated point stays on the x87 stack; each row sum ends in a double
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_U_Float80 translated[3];
+    for (int axis = 0; axis < 3; ++axis)
+        translated[axis] = fp.subtract(fp.load(p_in->k[axis]), fp.load(vv.k[axis]));
+    for (int axis = 0; axis < 3; ++axis)
+        p_out->k[axis] = fp.store_double(ivp_matrix_projection<true, 2, 1, 0>(fp, this, translated, axis));
+#else
     inline_vimult4(p_in, p_out);
+#endif
 };
 #endif
 
 void IVP_U_Matrix::vimult4(const IVP_U_Float_Point *p_in, IVP_U_Float_Point *p_out) const
 {
+#if IVP_ENABLE_X87_EMULATION
+    // 0x0F450: as the double versions, the row sums stored as floats
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_U_Float80 translated[3];
+    for (int axis = 0; axis < 3; ++axis)
+        translated[axis] = fp.subtract(fp.load(p_in->k[axis]), fp.load(vv.k[axis]));
+    for (int axis = 0; axis < 3; ++axis)
+        p_out->k[axis] = fp.store_float(ivp_matrix_projection<true, 2, 1, 0>(fp, this, translated, axis));
+#else
     inline_vimult4(p_in, p_out);
+#endif
 };
 
 void IVP_U_Matrix::vmult4(const IVP_U_Float_Point *p_in, IVP_U_Float_Point *p_out) const
 {
+#if IVP_ENABLE_X87_EMULATION
+    // 0x0F4C0: column by column; the x and y row sums are doubles after every step (y also adds its translation
+    // before the store), the z row sum stays on the x87 stack; x adds its translation last
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 x = fp.load(p_in->k[0]), y = fp.load(p_in->k[1]), z = fp.load(p_in->k[2]);
+    IVP_DOUBLE a = fp.store_double(fp.multiply(fp.load(get_elem(0, 0)), x));
+    IVP_DOUBLE b = fp.store_double(fp.multiply(fp.load(get_elem(1, 0)), x));
+    IVP_U_Float80 c = fp.multiply(x, fp.load(get_elem(2, 0)));
+    a = fp.store_double(fp.add(fp.multiply(fp.load(get_elem(0, 1)), y), fp.load(a)));
+    b = fp.store_double(fp.add(fp.multiply(fp.load(get_elem(1, 1)), y), fp.load(b)));
+    c = fp.add(c, fp.multiply(fp.load(get_elem(2, 1)), y));
+    a = fp.store_double(fp.add(fp.multiply(fp.load(get_elem(0, 2)), z), fp.load(a)));
+    b = fp.store_double(fp.add(fp.add(fp.multiply(fp.load(get_elem(1, 2)), z), fp.load(b)), fp.load(vv.k[1])));
+    c = fp.add(fp.add(c, fp.multiply(fp.load(get_elem(2, 2)), z)), fp.load(vv.k[2]));
+    p_out->k[0] = fp.store_float(fp.add(fp.load(a), fp.load(vv.k[0])));
+    p_out->k[1] = fp.store_float(fp.load(b));
+    p_out->k[2] = fp.store_float(c);
+#else
     inline_vmult4(p_in, p_out);
+#endif
 };
 
 #if !defined(IVP_NO_DOUBLE)

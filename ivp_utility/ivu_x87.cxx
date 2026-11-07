@@ -25,13 +25,21 @@
 
 typedef char IVP_X87_Status_Size_Check[sizeof(softfloat_status_t) <= 16 ? 1 : -1];
 
+#if IVP_X87_HARD_LONG_DOUBLE
+thread_local bool ivp_x87_control_is_explicit = false;
+thread_local IVP_X87_Control ivp_x87_control =
+    {IVP_X87_Arithmetic::PRECISION_64, IVP_X87_Arithmetic::ROUND_NEAREST};
+static thread_local unsigned short ivp_x87_saved_host_control = 0;
+#else
 static thread_local bool ivp_x87_control_is_explicit = false;
 static thread_local IVP_X87_Control ivp_x87_control =
     {IVP_X87_Arithmetic::PRECISION_64, IVP_X87_Arithmetic::ROUND_NEAREST};
+#endif
 #if IVP_X87_NATIVE_ABI
 static thread_local unsigned int ivp_x87_saved_native_control = 0;
 #endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 IVP_X87_Control IVP_X87_Control::current()
 {
     IVP_X87_Control result = ivp_x87_control;
@@ -55,6 +63,7 @@ IVP_X87_Control IVP_X87_Control::current()
 #endif
     return result;
 }
+#endif
 
 void IVP_X87_Control::set(const IVP_X87_Control &control)
 {
@@ -71,6 +80,13 @@ void IVP_X87_Control::set(const IVP_X87_Control &control)
         control.rounding == IVP_X87_Arithmetic::ROUND_TO_ZERO ? _RC_CHOP : _RC_NEAR;
     _controlfp_s(&ignored, precision | rounding, _MCW_PC | _MCW_RC);
 #endif
+#if IVP_X87_HARD_LONG_DOUBLE
+    // HARD long double arithmetic runs on the FPU: keep it at the selection, so objects find it already set.
+    if (!ivp_x87_control_is_explicit)
+        ivp_x87_saved_host_control = ivp_x87_host_control();
+    ivp_x87_set_host_control(static_cast<unsigned short>((ivp_x87_host_control() & ~0x0f00u)
+        | IVP_X87_Arithmetic::control_bits(control.precision, control.rounding)));
+#endif
     ivp_x87_control = control;
     ivp_x87_control_is_explicit = true;
 }
@@ -83,6 +99,10 @@ void IVP_X87_Control::reset()
         unsigned int ignored = 0;
         _controlfp_s(&ignored, ivp_x87_saved_native_control, _MCW_PC | _MCW_RC);
     }
+#endif
+#if IVP_X87_HARD_LONG_DOUBLE
+    if (ivp_x87_control_is_explicit)
+        ivp_x87_set_host_control(ivp_x87_saved_host_control);
 #endif
     ivp_x87_control_is_explicit = false;
 }
@@ -111,12 +131,27 @@ IVP_U_Float80 IVP_U_Float80::from_bytes(const unsigned char *bytes)
 
 void IVP_U_Float80::to_bytes(unsigned char *bytes) const
 {
+    const uint64_t significand = get_significand();
+    const uint16_t sign_exponent = get_sign_exponent();
     for(unsigned i = 0; i < 8; ++i)
         bytes[i] = static_cast<unsigned char>(significand >> (i * 8));
     bytes[8] = static_cast<unsigned char>(sign_exponent);
     bytes[9] = static_cast<unsigned char>(sign_exponent >> 8);
 }
 
+#if IVP_X87_HARD_LONG_DOUBLE
+void IVP_X87_Arithmetic::init_status() const
+{
+    softfloat_status_t *status = new(status_storage.bytes) softfloat_status_t();
+    status->softfloat_exceptionMasks = softfloat_all_exceptions_mask;
+    const unsigned precision = object_control & 0x0300;
+    status->extF80_roundingPrecision = precision == 0x0000 ? 32 : precision == 0x0200 ? 64 : 80;
+    status->softfloat_roundingMode = static_cast<uint8_t>((object_control >> 10) & 3);
+    status_ready = true;
+}
+#endif
+
+#if !IVP_X87_HARD_LONG_DOUBLE
 IVP_X87_Arithmetic::IVP_X87_Arithmetic(Precision precision, Rounding rounding)
     : fast_path(false), fast_inexact(false), native_path(false)
 {
@@ -125,12 +160,16 @@ IVP_X87_Arithmetic::IVP_X87_Arithmetic(Precision precision, Rounding rounding)
     set_precision(precision);
     set_rounding(rounding);
 }
+#endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 IVP_X87_Arithmetic::IVP_X87_Arithmetic(const IVP_X87_Control &control)
     : IVP_X87_Arithmetic(control.precision, control.rounding)
 {
 }
+#endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 void IVP_X87_Arithmetic::set_precision(Precision precision)
 {
     assert(precision == PRECISION_24 || precision == PRECISION_53 || precision == PRECISION_64);
@@ -138,7 +177,9 @@ void IVP_X87_Arithmetic::set_precision(Precision precision)
         precision == PRECISION_24 ? 32 : precision == PRECISION_53 ? 64 : 80;
     update_fast_path();
 }
+#endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 void IVP_X87_Arithmetic::set_rounding(Rounding rounding)
 {
     assert(rounding >= ROUND_NEAREST && rounding <= ROUND_TO_ZERO);
@@ -146,7 +187,9 @@ void IVP_X87_Arithmetic::set_rounding(Rounding rounding)
         static_cast<uint8_t>(rounding);
     update_fast_path();
 }
+#endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 void IVP_X87_Arithmetic::update_fast_path()
 {
     const softfloat_status_t *status = static_cast<const softfloat_status_t *>(get_status());
@@ -160,21 +203,28 @@ void IVP_X87_Arithmetic::update_fast_path()
 #else
     __asm__ __volatile__("fnstcw %0" : "=m"(control));
 #endif
-    native_path = fast_path && (control & 0x0f00) == 0x0300; // PC = 64-bit, RC = nearest
+    const unsigned precision = status->extF80_roundingPrecision == 32 ? 0x0000u
+        : status->extF80_roundingPrecision == 64 ? 0x0200u : 0x0300u;
+    native_path = (control & 0x0f00) == (precision | (static_cast<unsigned>(status->softfloat_roundingMode) << 10));
 #endif
 }
+#endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 unsigned IVP_X87_Arithmetic::get_exception_flags() const
 {
     return (static_cast<unsigned>(static_cast<const softfloat_status_t *>(get_status())->softfloat_exceptionFlags) & 0x3f)
         | (fast_inexact ? static_cast<unsigned>(EXCEPTION_INEXACT_RESULT) : 0u);
 }
+#endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 void IVP_X87_Arithmetic::clear_exception_flags()
 {
     static_cast<softfloat_status_t *>(get_status())->softfloat_exceptionFlags = 0;
     fast_inexact = false;
 }
+#endif
 
 IVP_U_Float80 IVP_X87_Arithmetic::load_general(float value)
 {
@@ -190,10 +240,12 @@ IVP_U_Float80 IVP_X87_Arithmetic::load_general(double value)
     return ivp_x87_output(f64_to_extF80(bits, static_cast<softfloat_status_t *>(get_status())));
 }
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 IVP_U_Float80 IVP_X87_Arithmetic::load(int32_t value)
 {
     return ivp_x87_output(i32_to_extF80(value));
 }
+#endif
 
 float IVP_X87_Arithmetic::store_float_general(const IVP_U_Float80 &value)
 {
@@ -233,6 +285,7 @@ static __declspec(naked) float __cdecl ivp_x87_return_float(const unsigned char 
 }
 #endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 double IVP_X87_Arithmetic::return_double(const IVP_U_Float80 &value)
 {
 #if IVP_X87_NATIVE_ABI
@@ -243,7 +296,9 @@ double IVP_X87_Arithmetic::return_double(const IVP_U_Float80 &value)
     return store_double(value);
 #endif
 }
+#endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 float IVP_X87_Arithmetic::return_float(const IVP_U_Float80 &value)
 {
 #if IVP_X87_NATIVE_ABI
@@ -254,6 +309,7 @@ float IVP_X87_Arithmetic::return_float(const IVP_U_Float80 &value)
     return store_float(value);
 #endif
 }
+#endif
 
 IVP_U_Float80 IVP_X87_Arithmetic::add_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
 {
@@ -279,6 +335,7 @@ IVP_U_Float80 IVP_X87_Arithmetic::divide_general(const IVP_U_Float80 &first, con
         static_cast<softfloat_status_t *>(get_status())));
 }
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 IVP_U_Float80 IVP_X87_Arithmetic::square_root(const IVP_U_Float80 &value)
 {
 #if IVP_X87_ARITHMETIC == IVP_X87_HARD
@@ -286,23 +343,30 @@ IVP_U_Float80 IVP_X87_Arithmetic::square_root(const IVP_U_Float80 &value)
 #endif
     return ivp_x87_output(extF80_sqrt(ivp_x87_input(value), static_cast<softfloat_status_t *>(get_status())));
 }
+#endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 IVP_U_Float80 IVP_X87_Arithmetic::absolute(const IVP_U_Float80 &value)
 {
     return IVP_U_Float80::from_bits(value.get_sign_exponent() & 0x7fff, value.get_significand());
 }
+#endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 IVP_U_Float80 IVP_X87_Arithmetic::negate(const IVP_U_Float80 &value)
 {
     return IVP_U_Float80::from_bits(value.get_sign_exponent() ^ 0x8000, value.get_significand());
 }
+#endif
 
+#if !IVP_X87_HARD_LONG_DOUBLE
 IVP_X87_Arithmetic::Relation IVP_X87_Arithmetic::compare(
     const IVP_U_Float80 &first, const IVP_U_Float80 &second, bool quiet)
 {
     return static_cast<Relation>(extF80_compare(ivp_x87_input(first), ivp_x87_input(second), quiet,
         static_cast<softfloat_status_t *>(get_status())));
 }
+#endif
 
 IVP_U_Float80 IVP_X87_Arithmetic::sine(const IVP_U_Float80 &value, bool *out_of_range)
 {

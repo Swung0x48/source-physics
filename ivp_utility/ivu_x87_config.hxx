@@ -32,9 +32,24 @@
 #define IVP_X87_ARITHMETIC_TRANSCENDENTAL IVP_X87_ARITHMETIC
 #endif
 
+// GCC and Clang on x86 and x86-64 (Clang on the MSVC targets with -mlong-double-80) give long double the x87
+// extended format: HARD then evaluates as inline long double arithmetic and an extended value is a long double.
+#if defined(__LDBL_MANT_DIG__) && __LDBL_MANT_DIG__ == 64 && (defined(__i386__) || defined(__x86_64__))
+#define IVP_X87_LONG_DOUBLE 1
+#else
+#define IVP_X87_LONG_DOUBLE 0
+#endif
+
 #if (IVP_X87_ARITHMETIC == IVP_X87_HARD || IVP_X87_ARITHMETIC_TRANSCENDENTAL == IVP_X87_HARD) \
-    && !(defined(_M_IX86) || defined(__i386__))
-#error "IVP_X87_ARITHMETIC / IVP_X87_ARITHMETIC_TRANSCENDENTAL HARD requires a 32-bit x86 target"
+    && !(defined(_M_IX86) || defined(__i386__) || IVP_X87_LONG_DOUBLE)
+#error "IVP_X87_ARITHMETIC / IVP_X87_ARITHMETIC_TRANSCENDENTAL HARD requires 32-bit x86 or an x87 long double"
+#endif
+
+// HARD arithmetic keeps extended values in long double registers.
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD && IVP_X87_LONG_DOUBLE
+#define IVP_X87_HARD_LONG_DOUBLE 1
+#else
+#define IVP_X87_HARD_LONG_DOUBLE 0
 #endif
 
 #endif

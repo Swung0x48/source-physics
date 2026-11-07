@@ -17,13 +17,14 @@
 // 32-bit MSVC uses __asm, which it does not inline; GCC and Clang (-m32) use
 // long double.
 
-#if !(defined(_M_IX86) || defined(__i386__))
-#error "HARD x87 selections require a 32-bit x86 target"
+#if !(defined(_M_IX86) || defined(__i386__) || IVP_X87_LONG_DOUBLE)
+#error "HARD x87 selections require 32-bit x86 or an x87 long double"
 #endif
 
 #include <string.h>
 
-#if defined(_MSC_VER)
+// MSVC's own inline assembly (32-bit only); clang-cl, which also defines _MSC_VER, uses long double.
+#if defined(_MSC_VER) && !IVP_X87_LONG_DOUBLE
 
 static IVP_U_Float80 ivp_x87_native_load_float(float value)
 {
@@ -149,6 +150,10 @@ static IVP_U_Float80 ivp_x87_native_scale(const IVP_U_Float80 &value, const IVP_
 
 #else
 
+#if IVP_X87_HARD_LONG_DOUBLE
+inline long double ivp_x87_native_in(const IVP_U_Float80 &value) { return value.native(); }
+inline IVP_U_Float80 ivp_x87_native_out(long double value) { return IVP_U_Float80::from_native(value); }
+#else
 inline long double ivp_x87_native_in(const IVP_U_Float80 &value)
 {
     long double result = 0;
@@ -162,21 +167,30 @@ inline IVP_U_Float80 ivp_x87_native_out(long double value)
     memcpy(&result, &value, 10);
     return result;
 }
+#endif
 
 inline IVP_U_Float80 ivp_x87_native_load_float(float value) { return ivp_x87_native_out(value); }
 inline IVP_U_Float80 ivp_x87_native_load_double(double value) { return ivp_x87_native_out(value); }
 
+// One fstp: no double rounding. A float or double kept in an x87 register (32-bit x86 without SSE math) would
+// keep the extended bits, so there the result goes through memory.
+#if defined(__i386__) && !defined(__SSE2_MATH__)
+#define IVP_X87_NATIVE_STORED volatile
+#else
+#define IVP_X87_NATIVE_STORED
+#endif
 inline float ivp_x87_native_store_float(const IVP_U_Float80 &value)
 {
-    volatile float result = static_cast<float>(ivp_x87_native_in(value)); // one fstp: no double rounding
+    IVP_X87_NATIVE_STORED float result = static_cast<float>(ivp_x87_native_in(value));
     return result;
 }
 
 inline double ivp_x87_native_store_double(const IVP_U_Float80 &value)
 {
-    volatile double result = static_cast<double>(ivp_x87_native_in(value));
+    IVP_X87_NATIVE_STORED double result = static_cast<double>(ivp_x87_native_in(value));
     return result;
 }
+#undef IVP_X87_NATIVE_STORED
 
 inline IVP_U_Float80 ivp_x87_native_add(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
 {

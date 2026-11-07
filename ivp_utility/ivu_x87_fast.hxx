@@ -79,7 +79,7 @@ inline int ivp_x87_fast_leading_zeros(uint64_t value) // value != 0
 // (hi:lo) / divisor for a divisor with its top bit set and hi < divisor.
 inline uint64_t ivp_x87_fast_divide128(uint64_t hi, uint64_t lo, uint64_t divisor, uint64_t *remainder)
 {
-#if defined(_MSC_VER) && defined(_M_X64) && _MSC_VER >= 1920
+#if defined(_MSC_VER) && defined(_M_X64) && _MSC_VER >= 1920 && !defined(__clang__) // clang-cl lacks _udiv128
     return _udiv128(hi, lo, divisor, remainder);
 #elif defined(__GNUC__) && defined(__x86_64__)
     uint64_t quotient, rest;

@@ -115,7 +115,8 @@ public:
     {
         const uint64_t bits = ivp_bit_cast_layout<uint64_t>(fp.store_double(square));
         const uint32_t high = static_cast<uint32_t>(bits >> 32);
-        const uint64_t seed = uint64_t(((0x7ff00000u - high) >> 1) + 0x1ff00000u) << 32;
+        // sar, as the 2002 DLL: an arithmetic shift (only a negative square tells the difference)
+        const uint64_t seed = uint64_t(uint32_t(int32_t(0x7ff00000u - high) >> 1) + 0x1ff00000u) << 32;
         IVP_U_Float80 inverse = fp.load(ivp_bit_cast_layout<double>(seed));
         const IVP_U_Float80 half = fp.load(0.5);
         const IVP_U_Float80 one = fp.load(1.0);
