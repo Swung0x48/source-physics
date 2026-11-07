@@ -400,8 +400,15 @@ IVP_DOUBLE IVP_Core::calc_correct_virt_mass(const IVP_U_Float_Point *core_point,
 
         IVP_U_Float_Point ret_world_speed;
         this->get_surface_speed_on_test(core_point, &ret_center_speed, &ret_rot_speed, &ret_world_speed);
+#if IVP_ENABLE_X87_EMULATION
+        // Retail RVA 0xC2B0 divides the unrounded length (0xE480 returns it
+        // in ST0) and returns the reciprocal there too.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        return fp.return_double(fp.divide(fp.load(1.0), ret_world_speed.real_length_extended(fp)));
+#else
         IVP_DOUBLE speed_after_test_push = ret_world_speed.real_length();
         return 1.0f / speed_after_test_push;
+#endif
     }
     else
     {
@@ -530,6 +537,22 @@ void IVP_Core::calc_at_matrix(IVP_Time current_time, IVP_U_Matrix *m_world_f_cor
 {
     while (IVP_MTIS_SIMULATED(movement_state))
     {
+#if IVP_ENABLE_X87_EMULATION
+        // Retail RVA 0xC510 stores the time difference as a double first; the
+        // interpolation parameter and each coordinate are rounded once.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_DOUBLE d_time = fp.store_double(fp.subtract(fp.load(current_time.get_seconds()), fp.load(time_of_last_psi.get_seconds())));
+        if (d_time == 0.0)
+            break;
+        IVP_U_Quat res;
+        res.set_interpolate_smoothly(&q_world_f_core_last_psi, &q_world_f_core_next_psi,
+                                     fp.store_double(fp.multiply(fp.load(i_delta_time), fp.load(d_time))));
+        res.set_matrix(m_world_f_core_out);
+        for (int axis = 0; axis < 3; ++axis)
+            m_world_f_core_out->vv.k[axis] = fp.store_double(fp.add(fp.multiply(fp.load(delta_world_f_core_psis.k[axis]), fp.load(d_time)),
+                                                                    fp.load(pos_world_f_core_last_psi.k[axis])));
+        return;
+#else
         IVP_DOUBLE d_time = current_time - time_of_last_psi;
         if (d_time == 0.0f)
             break; // e.g. beginn of psi
@@ -541,6 +564,7 @@ void IVP_Core::calc_at_matrix(IVP_Time current_time, IVP_U_Matrix *m_world_f_cor
             m_world_f_core_out->get_position()->add_multiple(&pos_world_f_core_last_psi, &delta_world_f_core_psis, d_time);
         }
         return;
+#endif
     }
     *m_world_f_core_out = m_world_f_core_last_psi; // no movement
 }
@@ -1027,10 +1051,20 @@ void IVP_Core::synchronize_with_rot_z()
     // RVA 0xCFA0 recomputes angular speed for equal-inertia balls too.
     {
         // new quaternion based solution to calculate the rotation speed:
+#if IVP_ENABLE_X87_EMULATION && IVP_X87_ARITHMETIC_TRANSCENDENTAL != IVP_X87_OFF
+        // Retail RVA 0xD0C4: the CRT asin returns in ST0, so each component
+        // is rounded once, at its float store.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_U_Float80 f = fp.load(fp.store_double(fp.add(fp.load(i_delta_time), fp.load(i_delta_time))));
+        rot_speed.k[0] = fp.store_float(fp.multiply(fp.arcsine(fp.load(q_core_f_core.x)), f));
+        rot_speed.k[1] = fp.store_float(fp.multiply(fp.arcsine(fp.load(q_core_f_core.y)), f));
+        rot_speed.k[2] = fp.store_float(fp.multiply(fp.arcsine(fp.load(q_core_f_core.z)), f));
+#else
         IVP_DOUBLE f = 2.0f * i_delta_time;
         rot_speed.set(f * IVP_Inline_Math::asind(q_core_f_core.x),
                       f * IVP_Inline_Math::asind(q_core_f_core.y),
                       f * IVP_Inline_Math::asind(q_core_f_core.z));
+#endif
     }
 }
 

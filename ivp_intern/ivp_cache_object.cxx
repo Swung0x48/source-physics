@@ -138,14 +138,43 @@ void IVP_Cache_Object::update_cache_object()
 
     if (object->q_core_f_object)
     {
+#if IVP_ENABLE_X87_EMULATION
+        // Retail RVA 0x18BED inlines the product with its own summation order;
+        // each component is rounded once, at its double store.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_U_Quat *a = &q_world_f_object, *b = object->q_core_f_object;
+        const IVP_U_Float80 x1 = fp.load(a->x), y1 = fp.load(a->y), z1 = fp.load(a->z), w1 = fp.load(a->w);
+        const IVP_U_Float80 x2 = fp.load(b->x), y2 = fp.load(b->y), z2 = fp.load(b->z), w2 = fp.load(b->w);
+        const IVP_U_Float80 xx = fp.subtract(fp.add(fp.add(fp.multiply(w1, x2), fp.multiply(y1, z2)), fp.multiply(x1, w2)), fp.multiply(z1, y2));
+        const IVP_U_Float80 yy = fp.subtract(fp.add(fp.add(fp.multiply(w1, y2), fp.multiply(z1, x2)), fp.multiply(y1, w2)), fp.multiply(x1, z2));
+        const IVP_U_Float80 zz = fp.subtract(fp.add(fp.add(fp.multiply(w1, z2), fp.multiply(z1, w2)), fp.multiply(x1, y2)), fp.multiply(y1, x2));
+        const IVP_U_Float80 ww = fp.subtract(fp.subtract(fp.subtract(fp.multiply(w1, w2), fp.multiply(x1, x2)), fp.multiply(y1, y2)), fp.multiply(z1, z2));
+        q_world_f_object.x = fp.store_double(xx); q_world_f_object.y = fp.store_double(yy);
+        q_world_f_object.z = fp.store_double(zz); q_world_f_object.w = fp.store_double(ww);
+#else
         q_world_f_object.inline_set_mult_quat(&q_world_f_object, object->q_core_f_object);
+#endif
         q_world_f_object.set_matrix(&m_world_f_object);
     }
 }
 
 void IVP_Cache_Object::transform_position_to_object_coords(const IVP_U_Point *P_world, IVP_U_Point *P_object_out) const
 {
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0x18CA0: the offsets stay extended; each axis sums the rows
+    // from the last one and is rounded once, at its double store.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_U_Float80 d[3];
+    for (int i = 0; i < 3; ++i)
+        d[i] = fp.subtract(fp.load(P_world->k[i]), fp.load(m_world_f_object.vv.k[i]));
+    for (int axis = 0; axis < 3; ++axis)
+        P_object_out->k[axis] = fp.store_double(fp.add(fp.add(
+            fp.multiply(fp.load(m_world_f_object.get_elem(2, axis)), d[2]),
+            fp.multiply(fp.load(m_world_f_object.get_elem(1, axis)), d[1])),
+            fp.multiply(fp.load(m_world_f_object.get_elem(0, axis)), d[0])));
+#else
     this->m_world_f_object.inline_vimult4(P_world, P_object_out);
+#endif
 }
 
 void IVP_Cache_Object::transform_position_to_object_coords(const IVP_U_Point *P_world, IVP_U_Float_Point *P_object_out) const

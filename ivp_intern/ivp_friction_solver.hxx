@@ -88,6 +88,34 @@ IVP_DOUBLE IVP_Friction_Solver::get_closing_speed_core_i(const IVP_Impact_Solver
 
 void IVP_Friction_Solver::apply_impulse(const IVP_Impact_Solver_Long_Term *info, IVP_DOUBLE impulse)
 {
+#if IVP_ENABLE_X87_EMULATION
+    // Retail inlines this (e.g. RVA 0x1AF45): both rotations and the first
+    // core's speed go through add_multiple (0x10290), the first core's factor
+    // -(inv_mass*impulse) passed as a double; the second core's speed is
+    // inlined with its factor extended, x stored straight, y and z spilled.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_Core *c0;
+    if ((c0 = info->contact_core[0]))
+    {
+        IVP_U_Float_Point hp;
+        hp.set_pairwise_mult(&info->contact_cross_nomal_cs[0], c0->get_inv_rot_inertia());
+        c0->rot_speed.add_multiple(&hp, -impulse);
+        c0->speed.add_multiple(&info->surf_normal, fp.store_double(fp.negate(fp.multiply(fp.load(c0->get_inv_mass()), fp.load(impulse)))));
+    }
+    IVP_Core *c1;
+    if ((c1 = info->contact_core[1]))
+    {
+        IVP_U_Float_Point hp;
+        hp.set_pairwise_mult(&info->contact_cross_nomal_cs[1], c1->get_inv_rot_inertia());
+        c1->rot_speed.add_multiple(&hp, impulse);
+        const IVP_U_Float80 f = fp.multiply(fp.load(c1->get_inv_mass()), fp.load(impulse));
+        for (int i = 0; i < 3; ++i)
+        {
+            const IVP_U_Float80 sum = fp.add(fp.multiply(fp.load(info->surf_normal.k[i]), f), fp.load(c1->speed.k[i]));
+            c1->speed.k[i] = i == 0 ? fp.store_float(sum) : fp.store_float(fp.load(fp.store_double(sum)));
+        }
+    }
+#else
     IVP_Core *c0;
     if ((c0 = info->contact_core[0]))
     {
@@ -109,6 +137,7 @@ void IVP_Friction_Solver::apply_impulse(const IVP_Impact_Solver_Long_Term *info,
         c1->rot_speed.add_multiple(&hp, impulse);
         c1->speed.add_multiple(&info->surf_normal, impulse * c1->get_inv_mass());
     }
+#endif
 }
 
 void IVP_Friction_Solver::async_apply_impulse(const IVP_Impact_Solver_Long_Term *info, IVP_DOUBLE impulse)

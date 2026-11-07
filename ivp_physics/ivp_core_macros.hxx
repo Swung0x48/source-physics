@@ -12,16 +12,34 @@
 
 #include <ivp_anomaly_manager.hxx>
 
+// Retail inlines both (e.g. update_cache_object, RVA 0x18A40) with the time
+// difference left in ST: the interpolation parameter and each coordinate
+// are rounded once, at their double stores.
 void IVP_Core::inline_calc_at_quaternion(IVP_Time current_time, IVP_U_Quat *quat) const
 {
+#if IVP_ENABLE_X87_EMULATION
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 d_time = fp.subtract(fp.load(current_time.get_seconds()), fp.load(time_of_last_psi.get_seconds()));
+    quat->set_interpolate_smoothly(&q_world_f_core_last_psi, &q_world_f_core_next_psi,
+                                   fp.store_double(fp.multiply(d_time, fp.load(i_delta_time))));
+#else
     IVP_DOUBLE d_time = current_time - time_of_last_psi;
     quat->set_interpolate_smoothly(&q_world_f_core_last_psi, &q_world_f_core_next_psi, d_time * i_delta_time);
+#endif
 }
 
 void IVP_Core::inline_calc_at_position(IVP_Time current_time, IVP_U_Point *pos) const
 {
+#if IVP_ENABLE_X87_EMULATION
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 d_time = fp.subtract(fp.load(current_time.get_seconds()), fp.load(time_of_last_psi.get_seconds()));
+    for (int axis = 0; axis < 3; ++axis)
+        pos->k[axis] = fp.store_double(fp.add(fp.multiply(fp.load(delta_world_f_core_psis.k[axis]), d_time),
+                                              fp.load(pos_world_f_core_last_psi.k[axis])));
+#else
     IVP_DOUBLE d_time = current_time - time_of_last_psi;
     pos->add_multiple(&pos_world_f_core_last_psi, &delta_world_f_core_psis, d_time);
+#endif
 }
 
 void IVP_Core::clip_velocity(IVP_U_Float_Point *velocity, IVP_U_Float_Point *rotation_vec)

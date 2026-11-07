@@ -113,6 +113,23 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_BF(IVP_Cache_Ball *m_cache_
         m_cache_F->get_object_cache()->transform_vector_to_world_coords(&wHesse_vecF_os, &contact_plane);
         mindist->contact_plane.set(&contact_plane);
 
+#if IVP_ENABLE_X87_EMULATION
+        // Retail RVA 0x30E23: both projections and their difference stay in
+        // ST; only the distance minus the radius is stored, as a float.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_U_Float80 h0 = fp.load(wHesse_vecF_os.k[0]), h1 = fp.load(wHesse_vecF_os.k[1]), h2 = fp.load(wHesse_vecF_os.k[2]);
+        const IVP_U_Float80 dist_plus_radius = fp.subtract(
+            fp.add(fp.add(fp.multiply(fp.load(p_Fos.k[2]), h2), fp.multiply(fp.load(p_Fos.k[1]), h1)), fp.multiply(fp.load(p_Fos.k[0]), h0)),
+            fp.add(fp.add(fp.multiply(fp.load(F_O_os->k[2]), h2), fp.multiply(fp.load(F_O_os->k[1]), h1)), fp.multiply(fp.load(F_O_os->k[0]), h0)));
+        m_cache_F->tmp.synapse->update_synapse(F, IVP_ST_TRIANGLE);
+        if (fp.compare(dist_plus_radius, fp.load(0.0)) == IVP_X87_Arithmetic::LESS)
+        { // check for backside
+            m_cache_F->tmp.synapse->update_synapse(F, IVP_ST_BACKSIDE);
+            this->pos_opposite_BacksideOs.set(&p_Fos);
+            return IVP_MRC_BACKSIDE;
+        }
+        mindist->len_numerator = fp.store_float(fp.subtract(dist_plus_radius, fp.load(mindist->sum_extra_radius)));
+#else
         IVP_DOUBLE dist_plus_radius = p_Fos.dot_product(&wHesse_vecF_os) - wHesse_vecF_os.dot_product(F_O_os);
         m_cache_F->tmp.synapse->update_synapse(F, IVP_ST_TRIANGLE);
         if (dist_plus_radius < 0.0f)
@@ -122,6 +139,7 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_BF(IVP_Cache_Ball *m_cache_
             return IVP_MRC_BACKSIDE;
         }
         mindist->len_numerator = dist_plus_radius - mindist->sum_extra_radius;
+#endif
 
 #ifdef IVP_HALFSPACE_OPTIMIZATION_ENABLED
         mindist->contact_dot_diff_center = calc_contact_center_projection(&m_cache_B->cache_object->core_pos, &m_cache_F->get_object_cache()->core_pos,&mindist->contact_plane);

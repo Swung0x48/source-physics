@@ -56,6 +56,30 @@ static void contact_normal_cross(const IVP_U_Matrix *matrix,
 #endif
 }
 
+#if IVP_ENABLE_X87_EMULATION
+// The world contact point in core coordinates as RVA 0x1F860 computes it for
+// either core: the offsets from the core's position stay extended, each axis
+// sums in ST and is stored as a float; the two cores sum in different orders.
+static void contact_point_to_core(const IVP_U_Matrix *m, const IVP_U_Point *point_ws,
+    IVP_U_Float_Point *point_cs, bool second_core)
+{
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_U_Float80 p[3], t[3];
+    for (int i = 0; i < 3; ++i)
+        p[i] = fp.subtract(fp.load(point_ws->k[i]), fp.load(m->vv.k[i]));
+    for (int axis = 0; axis < 3; ++axis)
+        t[axis] = fp.multiply(fp.load(m->get_elem(0, axis)), p[0]);
+    point_cs->k[0] = fp.store_float(fp.add(fp.add(fp.multiply(fp.load(m->get_elem(1, 0)), p[1]),
+        fp.multiply(fp.load(m->get_elem(2, 0)), p[2])), t[0]));
+    for (int axis = 1; axis < 3; ++axis)
+    {
+        const IVP_U_Float80 y = fp.multiply(fp.load(m->get_elem(1, axis)), p[1]);
+        const IVP_U_Float80 z = fp.multiply(fp.load(m->get_elem(2, axis)), p[2]);
+        point_cs->k[axis] = fp.store_float(second_core ? fp.add(fp.add(t[axis], y), z) : fp.add(fp.add(y, z), t[axis]));
+    }
+}
+#endif
+
 // calculates:
 //    diff_contact_vec
 //    surf_normal
@@ -93,7 +117,15 @@ void IVP_Contact_Point::p_calc_friction_qr_PF(const IVP_U_Point *pp,
     { // calc surface normal
         IVP_U_Point wHesse_vecF_Fos;
         IVP_CLS.calc_hesse_vec_object_not_normized(F, m_cache_F->get_compact_ledge(), &wHesse_vecF_Fos);
+#if IVP_ENABLE_X87_EMULATION
+        // Retail RVA 0x1EF1E: each double * float product is rounded in ST,
+        // then stored as a double.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        for (int i = 0; i < 3; ++i)
+            wHesse_vecF_Fos.k[i] = fp.store_double(fp.multiply(fp.load(wHesse_vecF_Fos.k[i]), fp.load(inv_triangle_det)));
+#else
         wHesse_vecF_Fos.mult(inv_triangle_det);
+#endif
         // wHesse_vecF_Fos.fast_normize();
 
         IVP_U_Point hesse_vec_ws;
@@ -101,7 +133,19 @@ void IVP_Contact_Point::p_calc_friction_qr_PF(const IVP_U_Point *pp,
 
         const IVP_U_Float_Point *F_O_Fos = IVP_CLS.give_object_coords(F, m_cache_F);
         const IVP_U_Float_Point *F_1_Fos = IVP_CLS.give_object_coords(F->get_next(), m_cache_F);
+#if IVP_ENABLE_X87_EMULATION
+        {
+            // RVA 0x1EF73: (z, y, x) for the point, (y, x, z) for the face corner.
+            const IVP_U_Float80 h0 = fp.load(wHesse_vecF_Fos.k[0]), h1 = fp.load(wHesse_vecF_Fos.k[1]), h2 = fp.load(wHesse_vecF_Fos.k[2]);
+            const IVP_U_Float80 point = fp.add(fp.add(fp.multiply(h2, fp.load(pp_Fos.k[2])), fp.multiply(h1, fp.load(pp_Fos.k[1]))),
+                                               fp.multiply(fp.load(pp_Fos.k[0]), h0));
+            const IVP_U_Float80 corner = fp.add(fp.add(fp.multiply(fp.load(F_O_Fos->k[1]), h1), fp.multiply(fp.load(F_O_Fos->k[0]), h0)),
+                                                fp.multiply(fp.load(F_O_Fos->k[2]), h2));
+            last_gap_len = fp.store_float(fp.subtract(point, corner));
+        }
+#else
         last_gap_len = wHesse_vecF_Fos.dot_product(&pp_Fos) - wHesse_vecF_Fos.dot_product(F_O_Fos);
+#endif
         info->surf_normal.set_multiple(&hesse_vec_ws, -1.0f);
 
         // calc span_friction_v
@@ -219,6 +263,61 @@ void IVP_Contact_Point::p_calc_friction_s_PK(const IVP_U_Point *pp, const IVP_Co
     IVP_CLS.give_world_coords_AT(K, m_cache_K, &tp);
     IVP_U_Point tp_next;
     IVP_CLS.give_world_coords_AT(K->get_next(), m_cache_K, &tp_next);
+
+#if IVP_ENABLE_X87_EMULATION
+    {
+        // Retail RVA 0x1F160. The double differences are rounded straight to
+        // floats; the squared edge length is stored as a double for
+        // isqrt_double; the distance stays in ST (its float copy is the gap);
+        // the rescaled vector stores x and y straight and spills z; the
+        // normal is a float cross product normalized by 0xE030.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        IVP_U_Float_Point vec1, vec2;
+        for (int i = 0; i < 3; ++i)
+        {
+            vec1.k[i] = fp.store_float(fp.subtract(fp.load(tp_next.k[i]), fp.load(tp.k[i])));
+            vec2.k[i] = fp.store_float(fp.subtract(fp.load(pp->k[i]), fp.load(tp.k[i])));
+        }
+        const IVP_DOUBLE vec1_ql = fp.store_double(fp.add(fp.add(fp.multiply(fp.load(vec1.k[2]), fp.load(vec1.k[2])),
+            fp.multiply(fp.load(vec1.k[1]), fp.load(vec1.k[1]))), fp.multiply(fp.load(vec1.k[0]), fp.load(vec1.k[0]))));
+        const IVP_DOUBLE i_len = (vec1_ql > P_DOUBLE_EPS) ? IVP_Inline_Math::isqrt_double(vec1_ql) : 0.0;
+
+        IVP_U_Float_Point vert_12;
+        vert_12.inline_calc_cross_product(&vec1, &vec2);
+        const IVP_U_Float80 distance = fp.multiply(vert_12.real_length_extended(fp), fp.load(i_len));
+        last_gap_len = fp.store_float(distance);
+        if (fp.compare(fp.multiply(distance, distance), fp.load(P_DOUBLE_EPS)) == IVP_X87_Arithmetic::GREATER)
+        {
+            const IVP_U_Float80 f = fp.divide(fp.load(i_len), distance);
+            const IVP_DOUBLE z = fp.store_double(fp.multiply(fp.load(vert_12.k[2]), f));
+            vert_12.k[0] = fp.store_float(fp.multiply(fp.load(vert_12.k[0]), f));
+            vert_12.k[1] = fp.store_float(fp.multiply(fp.load(vert_12.k[1]), f));
+            vert_12.k[2] = fp.store_float(fp.load(z));
+        }
+        else
+        {
+            vert_12.set(1.0f, 0.0f, 0.0f);
+        }
+        info->surf_normal.inline_calc_cross_product(&vec1, &vert_12);
+        info->surf_normal.normize();
+        info->contact_point_ws.set(pp);
+        info->span_friction_v[0].set(&vert_12);
+
+        if (cp_status == IVP_CPBS_NEEDS_RECHECK)
+        {
+            this->cp_status = IVP_CPBS_NORMAL;
+            // RVA 0x1F347: (z, y, x), times i_len squared, all in ST.
+            const IVP_U_Float80 s = fp.multiply(fp.add(fp.add(fp.multiply(fp.load(vec1.k[2]), fp.load(vec2.k[2])),
+                fp.multiply(fp.load(vec2.k[1]), fp.load(vec1.k[1]))), fp.multiply(fp.load(vec2.k[0]), fp.load(vec1.k[0]))),
+                fp.multiply(fp.load(i_len), fp.load(i_len)));
+            if (fp.compare(s, fp.load(0.0)) == IVP_X87_Arithmetic::LESS || fp.compare(s, fp.load(1.0)) == IVP_X87_Arithmetic::GREATER)
+            {
+                info->friction_is_broken = IVP_TRUE;
+            }
+        }
+        return;
+    }
+#endif
 
     IVP_U_Float_Point vec1, vec2;
     vec1.subtract(&tp_next, &tp);
@@ -519,6 +618,9 @@ void IVP_Contact_Point::recalc_friction_s_vals()
         {                                        // && !core0->pinned){ //@@CBPIN
 
             const IVP_U_Matrix *m_world_f_core = core0->get_m_world_f_core_PSI();
+#if IVP_ENABLE_X87_EMULATION
+            contact_point_to_core(m_world_f_core, &info->contact_point_ws, &info->contact_point_cs[0], false);
+#else
             const IVP_DOUBLE px=info->contact_point_ws.k[0]-m_world_f_core->vv.k[0];
             const IVP_DOUBLE py=info->contact_point_ws.k[1]-m_world_f_core->vv.k[1];
             const IVP_DOUBLE pz=info->contact_point_ws.k[2]-m_world_f_core->vv.k[2];
@@ -526,6 +628,7 @@ void IVP_Contact_Point::recalc_friction_s_vals()
                 m_world_f_core->get_elem(1,0)*py+m_world_f_core->get_elem(2,0)*pz+m_world_f_core->get_elem(0,0)*px,
                 m_world_f_core->get_elem(1,1)*py+m_world_f_core->get_elem(2,1)*pz+m_world_f_core->get_elem(0,1)*px,
                 m_world_f_core->get_elem(1,2)*py+m_world_f_core->get_elem(2,2)*pz+m_world_f_core->get_elem(0,2)*px);
+#endif
 
             // RVA 0x1F860 keeps the transformed normal's x component in x87;
             // y/z are float spills. Rounding x first cancels the small torque
@@ -554,7 +657,11 @@ void IVP_Contact_Point::recalc_friction_s_vals()
         {                                        // && !core1->pinned){ //@@CBPIN
 
             const IVP_U_Matrix *m_world_f_core = core1->get_m_world_f_core_PSI();
+#if IVP_ENABLE_X87_EMULATION
+            contact_point_to_core(m_world_f_core, &info->contact_point_ws, &info->contact_point_cs[1], true);
+#else
             m_world_f_core->inline_vimult4(&info->contact_point_ws, &info->contact_point_cs[1]);
+#endif
 
             contact_normal_cross(m_world_f_core, &info->surf_normal, &info->contact_point_cs[1],
                 &info->contact_cross_nomal_cs[1], true);

@@ -435,7 +435,17 @@ void IVP_Impact_Solver::do_impact(IVP_Core *pushed_cores[2], IVP_BOOL allow_dela
 		core[0]->environment->get_debug_manager()->all_time_impacts += 1.0f;
 	}
 
+#if IVP_ENABLE_X87_EMULATION
+	{
+		// Retail RVA 0x22ED9: the whole expression in ST, rounded at the double store.
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		const IVP_U_Float80 one = fp.load(1.0f);
+		const IVP_U_Float80 scaled = fp.divide(one, fp.add(fp.multiply(fp.load((int32_t)pushes_while_system), fp.load(IVP_INV_HALF_CONSERVATION_STEPS)), one));
+		used_conservation = fp.store_double(fp.subtract(one, fp.multiply(scaled, fp.subtract(one, fp.load(percent_energy_conservation)))));
+	}
+#else
 	used_conservation = 1.0f - (1.0f / (pushes_while_system * IVP_INV_HALF_CONSERVATION_STEPS + 1.0f)) * (1.0f - percent_energy_conservation);
+#endif
 
 	// RVA 0x22ED0 retains the sum in x87 through the safety-factor multiply.
 	// A float spill changes the frame-7728 rescue speed by one ULP.
@@ -500,7 +510,27 @@ void IVP_Impact_Solver::do_impact(IVP_Core *pushed_cores[2], IVP_BOOL allow_dela
 
 	int push_counter = 0;
 
+#if IVP_ENABLE_X87_EMULATION
+	// Retail RVA 0x23C80 (estimate_push_impulse, push_v0 folded to zero)
+	// keeps everything in ST and returns it there unrounded; the caller
+	// multiplies by 0.1f and stores the double.
+	calc_virt_masses_impact_solver(surf_normal);
+	IVP_DOUBLE impulse;
+	{
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		IVP_U_Float80 push_v1 = fp.negate(fp.add(fp.add(
+			fp.multiply(fp.load(surf_normal->k[2]), fp.load(relative_world_speed.k[2])),
+			fp.multiply(fp.load(surf_normal->k[1]), fp.load(relative_world_speed.k[1]))),
+			fp.multiply(fp.load(surf_normal->k[0]), fp.load(relative_world_speed.k[0]))));
+		IVP_U_Float80 u0 = fp.multiply(push_v1, fp.load(virt_mass[1]));
+		u0 = fp.add(u0, u0);
+		const IVP_U_Float80 div_masses = fp.divide(fp.load(1.0), fp.add(fp.load(virt_mass[0]), fp.load(virt_mass[1])));
+		const IVP_U_Float80 estimate = fp.multiply(fp.multiply(u0, div_masses), fp.load(virt_mass[0]));
+		impulse = fp.store_double(fp.multiply(estimate, fp.load((double)0.1f)));
+	}
+#else
 	IVP_DOUBLE impulse = this->estimate_push_impulse() * 0.1f; // do only 10 percent pushes
+#endif
 
 	IVP_DOUBLE speed_parallel_mindist = relative_world_speed.dot_product(surf_normal); // normally negative value
 
@@ -537,6 +567,41 @@ void IVP_Impact_Solver::do_impact(IVP_Core *pushed_cores[2], IVP_BOOL allow_dela
 
 	// last_energy=full_energy;
 
+#if IVP_ENABLE_X87_EMULATION
+	// Retail RVA 0x23103-0x232C4: the projections stay in ST; virtual_speed and
+	// give_back_speed are stored as doubles (give_back_speed is compared before
+	// its store rounds it); speed_diff stays extended into the division.
+	{
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		integral_pushes_world.set_to_zero();
+		virtual_speed = fp.store_double(fp.negate(relative_world_speed.dot_product_extended(fp, surf_normal)));
+		speed_before = virtual_speed;
+		give_back_speed = fp.store_double(fp.add(fp.multiply(fp.square_root(fp.load(used_conservation)), fp.load(virtual_speed)),
+			fp.multiply(fp.square_root(fp.load((int32_t)pushes_while_system)), fp.load((double)IVP_SPEED_ADDON_SYSTEM_IMPACT))));
+		while ((virtual_speed > 0.0) && (push_counter < 100))
+		{
+			push_counter++;
+			do_push(impulse);
+			get_relative_speed_vector();
+			virtual_speed = fp.store_double(fp.negate(relative_world_speed.dot_product_extended(fp, surf_normal)));
+			get_world_push_direction();
+		}
+		const IVP_U_Float80 give_back = fp.add(fp.load(virtual_speed), fp.load(give_back_speed));
+		give_back_speed = fp.store_double(give_back);
+		world_push_direction.set_multiple(surf_normal, -1.0f);
+		if ((fp.compare(give_back, fp.load(0.0)) == IVP_X87_Arithmetic::GREATER) && (push_counter != 100))
+		{
+			do_push(1); // test push @@CB
+			get_relative_speed_vector();
+			const IVP_U_Float80 speed_diff = fp.add(relative_world_speed.dot_product_extended(fp, surf_normal), fp.load(virtual_speed));
+			IVP_DOUBLE target_push = 0.0;
+			if (fp.compare(fp.absolute(speed_diff), fp.load((double)IMPACT_EPS)) == IVP_X87_Arithmetic::GREATER)
+				target_push = fp.store_double(fp.divide(fp.load(give_back_speed), speed_diff));
+			undo_push();
+			do_push(target_push);
+		}
+	}
+#else
 	integral_pushes_world.set_to_zero();
 	virtual_speed = -surf_normal->dot_product(&relative_world_speed); // alternative: world_push_direction->dot_pro..
 	speed_before = virtual_speed;
@@ -579,6 +644,8 @@ void IVP_Impact_Solver::do_impact(IVP_Core *pushed_cores[2], IVP_BOOL allow_dela
 		undo_push();
 		do_push(target_push);
 	}
+
+#endif
 
 	// energy_at_end=this->get_total_energy();
 	// factor=energy_at_end / full_energy;
@@ -756,6 +823,23 @@ void IVP_Impact_Solver::clear_change_values_cores()
 // gives impulse push on both objects
 // direction (pointing to second obj) is world_push_direction (is normized)
 // push quantity is impulse_val
+#if IVP_ENABLE_X87_EMULATION
+// IVP_U_Matrix3::inline_vimult3 as retail inlines it into do_push: the
+// products and sums stay in ST, in this order, and each result is stored as a
+// float.
+static void ivp_impact_push_vimult3(IVP_X87_Arithmetic &fp, const IVP_U_Matrix3 *m,
+                                    const IVP_U_Float_Point *in, IVP_U_Float_Point *out)
+{
+    const IVP_U_Float80 p0 = fp.load(in->k[0]), p1 = fp.load(in->k[1]), p2 = fp.load(in->k[2]);
+    out->k[0] = fp.store_float(fp.add(fp.multiply(fp.load(m->get_elem(0, 0)), p0),
+                                      fp.add(fp.multiply(fp.load(m->get_elem(1, 0)), p1), fp.multiply(fp.load(m->get_elem(2, 0)), p2))));
+    out->k[1] = fp.store_float(fp.add(fp.multiply(fp.load(m->get_elem(0, 1)), p0),
+                                      fp.add(fp.multiply(fp.load(m->get_elem(1, 1)), p1), fp.multiply(fp.load(m->get_elem(2, 1)), p2))));
+    out->k[2] = fp.store_float(fp.add(fp.add(fp.multiply(fp.load(m->get_elem(2, 2)), p2), fp.multiply(fp.load(m->get_elem(1, 2)), p1)),
+                                      fp.multiply(fp.load(m->get_elem(0, 2)), p0)));
+}
+#endif
+
 void IVP_Impact_Solver::do_push(IVP_DOUBLE impulse_val)
 {
 	IVP_U_Float_Point obj_push;
@@ -771,7 +855,17 @@ void IVP_Impact_Solver::do_push(IVP_DOUBLE impulse_val)
 		printf("push_dir_cos %f\n", surf_cos);
 	}
 
+#if IVP_ENABLE_X87_EMULATION
+	// Retail RVA 0x23940 keeps the three products in ST and stores x and y as
+	// floats; z is spilled as a double first.
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	const IVP_U_Float80 impulse = fp.load(impulse_val);
+	world_push.k[0] = fp.store_float(fp.multiply(fp.load(world_push.k[0]), impulse));
+	world_push.k[1] = fp.store_float(fp.multiply(fp.load(world_push.k[1]), impulse));
+	world_push.k[2] = fp.store_float(fp.load(fp.store_double(fp.multiply(fp.load(world_push.k[2]), impulse))));
+#else
 	world_push.mult(impulse_val); // vector gets longer with impulse_val
+#endif
 
 	if (!core[0]->physical_unmoveable)
 	{
@@ -779,7 +873,11 @@ void IVP_Impact_Solver::do_push(IVP_DOUBLE impulse_val)
 		{
 			// printf("p %.2f %.2f %.2f ",world_push_direction.k[0],world_push_direction.k[1],world_push_direction.k[2]);
 		}
+#if IVP_ENABLE_X87_EMULATION
+		ivp_impact_push_vimult3(fp, m_world_f_core[0], &world_push, &obj_push);
+#else
 		m_world_f_core[0]->inline_vimult3(&world_push, &obj_push); // obj_push now in object coords
+#endif
 		core[0]->test_push_core(obj_point[0], &obj_push, &world_push, &trans_speed_change[0], &rot_speed_change[0]);
 		rot_speed[0].add(&rot_speed_change[0]);		// ...speed0 has sum of pushes and beginning speed before impact
 		trans_speed[0].add(&trans_speed_change[0]); // if push has to be undone, values are subtracted later
@@ -792,7 +890,11 @@ void IVP_Impact_Solver::do_push(IVP_DOUBLE impulse_val)
 		{
 			// printf("p %.2f %.2f %.2f ",world_push_direction.k[0],world_push_direction.k[1],world_push_direction.k[2]);
 		}
+#if IVP_ENABLE_X87_EMULATION
+		ivp_impact_push_vimult3(fp, m_world_f_core[1], &world_push, &obj_push);
+#else
 		m_world_f_core[1]->inline_vimult3(&world_push, &obj_push);
+#endif
 		core[1]->test_push_core(obj_point[1], &obj_push, &world_push, &trans_speed_change[1], &rot_speed_change[1]);
 		IVP_IF(core[0]->environment->debug_information->debug_impact)
 		{
@@ -816,6 +918,19 @@ void IVP_Impact_Solver::calc_virt_masses_impact_solver(const IVP_U_Float_Point *
 		direction_world.mult(-1.0f);
 	}
 
+#if IVP_ENABLE_X87_EMULATION
+	// Retail RVA 0x23C44: each product is rounded at the current precision
+	// before its double store.
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	if (core[0]->physical_unmoveable)
+	{
+		virt_mass[0] = fp.store_double(fp.multiply(fp.load(virt_mass[1]), fp.load(100000.0)));
+	}
+	if (core[1]->physical_unmoveable)
+	{
+		virt_mass[1] = fp.store_double(fp.multiply(fp.load(virt_mass[0]), fp.load(100000.0)));
+	}
+#else
 	if (core[0]->physical_unmoveable)
 	{
 		virt_mass[0] = virt_mass[1] * 100000.0f; //@@CBPIN
@@ -824,6 +939,7 @@ void IVP_Impact_Solver::calc_virt_masses_impact_solver(const IVP_U_Float_Point *
 	{
 		virt_mass[1] = virt_mass[0] * 100000.0f; //@@CBPIN
 	}
+#endif
 }
 
 IVP_DOUBLE IVP_Impact_Solver::estimate_push_impulse()

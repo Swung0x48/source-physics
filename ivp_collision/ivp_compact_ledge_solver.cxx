@@ -650,7 +650,24 @@ void IVP_Compact_Ledge_Solver::calc_hesse_vec_object_not_normized(const IVP_Comp
     const IVP_U_Float_Point *p0 = IVP_CLS.give_object_coords(edge, ledge);
     const IVP_U_Float_Point *p1 = IVP_CLS.give_object_coords(edge->get_next(), ledge);
     const IVP_U_Float_Point *p2 = IVP_CLS.give_object_coords(edge->get_prev(), ledge);
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0x21280: the edge differences and their products are exact;
+    // each component's difference is rounded in ST, then stored as a double.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_U_Float80 a[3], b[3];
+    for (int i = 0; i < 3; ++i)
+    {
+        a[i] = fp.subtract(fp.load(p2->k[i]), fp.load(p0->k[i]));
+        b[i] = fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i]));
+    }
+    for (int i = 0; i < 3; ++i)
+    {
+        const int y = (i + 1) % 3, z = (i + 2) % 3;
+        out_vec->k[i] = fp.store_double(fp.subtract(fp.multiply(b[y], a[z]), fp.multiply(a[y], b[z])));
+    }
+#else
     out_vec->inline_set_vert_to_area_defined_by_three_points(p0, p2, p1);
+#endif
 }
 
 void IVP_Compact_Ledge_Solver::calc_hesse_vec_object_not_normized(const IVP_Compact_Edge *edge, const IVP_Compact_Ledge *ledge, IVP_U_Float_Point *out_vec)

@@ -280,8 +280,48 @@ void IVP_Solver_Core_Reaction::exert_impulse_dim3(IVP_Core *core_0, IVP_Core *co
     }
 }
 
+#if IVP_ENABLE_X87_EMULATION
+// target += v * f with the product and sum in ST. Components whose bit is set
+// in float_direct are stored straight as floats; the others are spilled as
+// doubles first (retail's register allocation, per site).
+static void ivp_reaction_add_multiple(IVP_X87_Arithmetic &fp, IVP_U_Float_Point *target,
+                                      const IVP_U_Float_Point *v, const IVP_U_Float80 &f, int float_direct)
+{
+    for (int i = 0; i < 3; ++i)
+    {
+        const IVP_U_Float80 sum = fp.add(fp.multiply(fp.load(v->k[i]), f), fp.load(target->k[i]));
+        target->k[i] = (float_direct >> i & 1) ? fp.store_float(sum) : fp.store_float(fp.load(fp.store_double(sum)));
+    }
+}
+#endif
+
 void IVP_Solver_Core_Reaction::exert_impulse_dim2(IVP_Core *core_0, IVP_Core *core_1, IVP_U_Float_Point &impulse_ds)
 {
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0x33AD0. core_0's speed goes through the non-inline
+    // IVP_U_Float_Point::add_multiple (0x10290: x and y direct, z spilled)
+    // with the factor passed as a double; everything else is inlined with x
+    // direct and y, z spilled. core_1's factor stays extended.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    if (core_0)
+    {
+        const IVP_U_Float80 inv_m = fp.load(core_0->get_inv_mass());
+        for (int d = 0; d < 2; ++d)
+            ivp_reaction_add_multiple(fp, &core_0->speed, direction_ws[d],
+                                      fp.load(fp.store_double(fp.multiply(fp.load(impulse_ds.k[d]), inv_m))), 3);
+        for (int d = 0; d < 2; ++d)
+            ivp_reaction_add_multiple(fp, &core_0->rot_speed, &cr_mult_inv0[d], fp.load(impulse_ds.k[d]), 1);
+    }
+    if (core_1)
+    {
+        const IVP_U_Float80 inv_m = fp.load(core_1->get_inv_mass());
+        for (int d = 0; d < 2; ++d)
+            ivp_reaction_add_multiple(fp, &core_1->speed, direction_ws[d],
+                                      fp.multiply(fp.negate(fp.load(impulse_ds.k[d])), inv_m), 1);
+        for (int d = 0; d < 2; ++d)
+            ivp_reaction_add_multiple(fp, &core_1->rot_speed, &cr_mult_inv1[d], fp.negate(fp.load(impulse_ds.k[d])), 1);
+    }
+#else
     if (core_0)
     {
         IVP_DOUBLE inv_m = core_0->get_inv_mass();
@@ -299,6 +339,7 @@ void IVP_Solver_Core_Reaction::exert_impulse_dim2(IVP_Core *core_0, IVP_Core *co
         core_1->rot_speed.add_multiple(&cr_mult_inv1[0], -impulse_ds.k[0]);
         core_1->rot_speed.add_multiple(&cr_mult_inv1[1], -impulse_ds.k[1]);
     }
+#endif
 }
 
 void IVP_Solver_Core_Reaction::exert_impulse_dim1(IVP_Core *core_0, IVP_Core *core_1, IVP_U_Float_Point &impulse_ds)

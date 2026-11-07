@@ -1060,6 +1060,23 @@ void IVP_Cluster::remove_object(IVP_Object *object)
     object->prev_in_cluster = NULL;
 }
 
+#if IVP_ENABLE_X87_EMULATION
+// IVP_U_Quat::inline_set_mult_quat as retail inlines it into calc_at_matrix
+// (RVA 0x9E35): each component sums in ST, in this order, and is rounded once.
+static void ivp_object_mult_quat(IVP_U_Quat *res, const IVP_U_Quat *a, const IVP_U_Quat *b)
+{
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 x1 = fp.load(a->x), y1 = fp.load(a->y), z1 = fp.load(a->z), w1 = fp.load(a->w);
+    const IVP_U_Float80 x2 = fp.load(b->x), y2 = fp.load(b->y), z2 = fp.load(b->z), w2 = fp.load(b->w);
+    const IVP_U_Float80 xx = fp.subtract(fp.add(fp.add(fp.multiply(x1, w2), fp.multiply(y1, z2)), fp.multiply(w1, x2)), fp.multiply(z1, y2));
+    const IVP_U_Float80 yy = fp.subtract(fp.add(fp.add(fp.multiply(y1, w2), fp.multiply(w1, y2)), fp.multiply(z1, x2)), fp.multiply(x1, z2));
+    const IVP_U_Float80 zz = fp.subtract(fp.add(fp.add(fp.multiply(z1, w2), fp.multiply(x1, y2)), fp.multiply(w1, z2)), fp.multiply(y1, x2));
+    const IVP_U_Float80 ww = fp.subtract(fp.subtract(fp.subtract(fp.multiply(w1, w2), fp.multiply(x1, x2)), fp.multiply(y1, y2)), fp.multiply(z1, z2));
+    res->x = fp.store_double(xx); res->y = fp.store_double(yy);
+    res->z = fp.store_double(zz); res->w = fp.store_double(ww);
+}
+#endif
+
 void IVP_Real_Object::calc_at_matrix(IVP_Time current_time, IVP_U_Matrix *m_world_f_object_out) const
 {
     IVP_U_Quat q_world_f_object;
@@ -1075,7 +1092,11 @@ void IVP_Real_Object::calc_at_matrix(IVP_Time current_time, IVP_U_Matrix *m_worl
 
     if (this->q_core_f_object)
     {
+#if IVP_ENABLE_X87_EMULATION
+        ivp_object_mult_quat(&q_world_f_object, &q_world_f_object, this->q_core_f_object);
+#else
         q_world_f_object.inline_set_mult_quat(&q_world_f_object, this->q_core_f_object);
+#endif
         q_world_f_object.set_matrix(m_world_f_object_out);
     }
 }

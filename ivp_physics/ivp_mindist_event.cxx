@@ -23,6 +23,29 @@
 #define P_MAX(a, b) (((a) > (b)) ? (a) : (b))
 #define P_MIN(a, b) (((a) < (b)) ? (a) : (b))
 
+// The float sums the event solvers pass on as doubles. Retail (e.g. RVA
+// 0x2B4B0) adds them in ST and rounds once, at the double store; an SSE2
+// build would round each float expression to a float first.
+static inline IVP_DOUBLE ivp_event_float_sum(IVP_FLOAT first, IVP_FLOAT second)
+{
+#if IVP_ENABLE_X87_EMULATION
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    return fp.store_double(fp.add(fp.load(first), fp.load(second)));
+#else
+    return first + second;
+#endif
+}
+
+static inline IVP_DOUBLE ivp_event_real_coll(IVP_FLOAT radius)
+{
+#if IVP_ENABLE_X87_EMULATION
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    return fp.store_double(fp.add(fp.multiply(fp.load(radius), fp.load(0.5)), fp.load(ivp_mindist_settings.real_coll_dist)));
+#else
+    return ivp_mindist_settings.real_coll_dist + radius * 0.5f;
+#endif
+}
+
 #if IVP_ENABLE_X87_EMULATION
 static IVP_DOUBLE ivp_event_dot(const IVP_U_Point *first, const IVP_U_Point *second)
 {
@@ -345,8 +368,8 @@ void IVP_Mindist_Event_Solver::calc_next_event_PF(const IVP_Compact_Edge *P, con
         // when does point P collide with surface F (no borders!) ?
         IVP_FLOAT radius = mindist->sum_extra_radius;
         IVP_DOUBLE sec_dist = mindist->get_coll_dist() + radius; // security distance
-        IVP_DOUBLE real_coll = ivp_mindist_settings.real_coll_dist + 0.5f * radius;
-        IVP_DOUBLE now_len = mindist->len_numerator + radius;
+        IVP_DOUBLE real_coll = ivp_event_real_coll(radius);
+        IVP_DOUBLE now_len = ivp_event_float_sum(mindist->len_numerator, radius);
         IVP_BOOL result = pf_coll_solver.find_first_t_for_value_coll(sec_dist, real_coll, t_now, event_time_out, &cache_P, &cache_F, &now_len, &event_time_out);
         if (result)
         {
@@ -428,8 +451,8 @@ void IVP_Mindist_Event_Solver::calc_next_event_BF(const IVP_Compact_Edge *F,
         // when does point P collide with surface F (no borders!) ?
         IVP_FLOAT radius = mindist->sum_extra_radius;
         IVP_DOUBLE sec_dist = mindist->get_coll_dist() + radius;                    // security distance
-        IVP_DOUBLE real_coll = ivp_mindist_settings.real_coll_dist + 0.5f * radius; // allow penetration
-        IVP_DOUBLE now_len = mindist->len_numerator + radius;
+        IVP_DOUBLE real_coll = ivp_event_real_coll(radius); // allow penetration
+        IVP_DOUBLE now_len = ivp_event_float_sum(mindist->len_numerator, radius);
 
         //@@@ optimization for static reference object (linear movement of ball)
         IVP_BOOL result = pf_coll_solver.find_first_t_for_value_coll(sec_dist, real_coll, t_now, t_max, &cache_P, &cache_F, &now_len, &event_time_out);
@@ -736,7 +759,7 @@ void IVP_Mindist_Event_Solver::calc_next_event_PP(const IVP_Compact_Edge *P,
         IVP_FLOAT radius = mindist->sum_extra_radius;
         ivp_u_bool found =
             solver_pp_coll.find_first_t_for_value_coll(mindist->get_coll_dist() + radius,
-                                                       ivp_mindist_settings.real_coll_dist + radius * 0.5f,
+                                                       ivp_event_real_coll(radius),
                                                        t_now,
                                                        t_max,
                                                        &cache_P,
@@ -862,7 +885,7 @@ void IVP_Mindist_Event_Solver::calc_next_event_BP(IVP_Ball *ball, const IVP_Comp
         IVP_FLOAT radius = mindist->sum_extra_radius;
         ivp_u_bool found =
             solver_pp_coll.find_first_t_for_value_coll(mindist->get_coll_dist() + radius,
-                                                       ivp_mindist_settings.real_coll_dist + radius * 0.5f,
+                                                       ivp_event_real_coll(radius),
                                                        t_now,
                                                        t_max,
                                                        &cache_P,
@@ -950,7 +973,7 @@ void IVP_Mindist_Event_Solver::calc_next_event_BB(IVP_Cache_Object *m_cache_A, I
         IVP_FLOAT radius = mindist->sum_extra_radius;
         ivp_u_bool found =
             solver_pp_coll.find_first_t_for_value_coll(mindist->get_coll_dist() + radius,
-                                                       ivp_mindist_settings.real_coll_dist + radius * 0.5f,
+                                                       ivp_event_real_coll(radius),
                                                        t_now,
                                                        t_max,
                                                        &cache_A,

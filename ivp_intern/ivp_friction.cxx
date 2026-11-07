@@ -245,6 +245,40 @@ IVP_DOUBLE IVP_Contact_Point::get_and_set_real_friction_len(IVP_U_Float_Point *r
 void IVP_Contact_Point::static_friction_single(const IVP_Event_Sim *es, IVP_FLOAT desired_gap, IVP_FLOAT speedup_factor)
 {
 	IVP_Impact_Solver_Long_Term *info = this->tmp_contact_info;
+#if IVP_ENABLE_X87_EMULATION
+	{
+		// Retail RVA 0x1AE40 (get_closing_speed, calc_desired_gap_speed and
+		// apply_impulse inlined): closing speed, gap difference and the
+		// product with the virtual mass stay in ST; the impulse is stored as
+		// a double, the pressure straight as a float.
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		IVP_U_Float80 closing = fp.load(0.0);
+		IVP_Core *c0 = info->contact_core[0];
+		if (c0)
+			closing = fp.add(c0->rot_speed.dot_product_extended(fp, &info->contact_cross_nomal_cs[0]),
+			                 c0->speed.dot_product_extended(fp, &info->surf_normal));
+		IVP_Core *c1 = info->contact_core[1];
+		if (c1)
+			closing = fp.subtract(fp.load(fp.store_double(closing)),
+			                      fp.add(c1->rot_speed.dot_product_extended(fp, &info->contact_cross_nomal_cs[1]),
+			                             c1->speed.dot_product_extended(fp, &info->surf_normal)));
+		const IVP_U_Float80 gap_diff = fp.subtract(fp.load(desired_gap), fp.load(this->get_gap_length()));
+		IVP_U_Float80 delay = fp.load(speedup_factor);
+		if (fp.compare(gap_diff, fp.load(0.0)) == IVP_X87_Arithmetic::LESS)
+			delay = fp.multiply(delay, fp.load((double)IVP_DESCENDING_SPEEDUP));
+		const IVP_DOUBLE impulse = fp.store_double(fp.multiply(fp.add(fp.multiply(delay, gap_diff), closing), fp.load(info->virtual_mass)));
+		if (impulse > 0.0)
+		{
+			this->now_friction_pressure = fp.store_float(fp.multiply(fp.load(impulse), fp.load(es->i_delta_time)));
+			IVP_Friction_Solver::apply_impulse(info, impulse);
+		}
+		else
+		{
+			this->now_friction_pressure = 0.0f;
+		}
+		return;
+	}
+#endif
 	IVP_DOUBLE closing_speed = info->get_closing_speed();
 	IVP_DOUBLE gap_diff = IVP_DOUBLE(desired_gap) - this->get_gap_length();
 	IVP_DOUBLE a = IVP_Friction_Solver::calc_desired_gap_speed(closing_speed, gap_diff, speedup_factor);

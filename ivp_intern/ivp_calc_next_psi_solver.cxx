@@ -176,7 +176,15 @@ void IVP_Calc_Next_PSI_Solver::calc_next_PSI_matrix(IVP_Event_Sim *event_sim, IV
         core->clip_velocity(&core->speed, &core->rot_speed);
     }
 
+#if IVP_ENABLE_X87_EMULATION
+    {
+        // RVA 0x1E42A stores 0xE480's ST0 result straight as a float.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        core->current_speed = fp.store_float(core->speed.real_length_extended(fp));
+    }
+#else
     core->current_speed = core->speed.real_length();
+#endif
     // RVA 0x1E300 keeps the event's binary64 step through rotation integration.
     IVP_DOUBLE simulation_delta_time = event_sim->delta_time;
     core->i_delta_time = event_sim->i_delta_time;

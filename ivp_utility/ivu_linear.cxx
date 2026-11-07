@@ -173,7 +173,14 @@ IVP_U_Float80 IVP_U_Point::dot_product_extended(IVP_X87_Arithmetic &fp, const IV
 
 IVP_DOUBLE IVP_U_Float_Point::real_length() const
 {
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0xE480: (x*x + y*y) + z*z and the root stay in ST; the
+    // result is returned there unrounded.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    return fp.return_double(real_length_extended(fp));
+#else
     return IVP_Inline_Math::sqrtd(this->quad_length());
+#endif
 }
 
 #if !defined(IVP_NO_DOUBLE)

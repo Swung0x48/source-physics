@@ -208,6 +208,18 @@ inline void IVP_U_Float_Point::set(const IVP_U_Float_Point *p_source)
 
 inline void IVP_U_Float_Point::add_multiple(const IVP_U_Float_Point *v1, const IVP_U_Float_Point *v2, IVP_DOUBLE factor2)
 {
+#if IVP_ENABLE_X87_EMULATION
+    // Retail keeps this out of line (RVA 0x10290): each v2*f + v1 in ST, x and
+    // y stored straight as floats, z spilled as a double first.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 f = fp.load(factor2);
+    const IVP_U_Float80 a = fp.add(fp.multiply(fp.load(v2->k[0]), f), fp.load(v1->k[0]));
+    const IVP_U_Float80 b = fp.add(fp.multiply(fp.load(v2->k[1]), f), fp.load(v1->k[1]));
+    const IVP_DOUBLE c = fp.store_double(fp.add(fp.multiply(fp.load(v2->k[2]), f), fp.load(v1->k[2])));
+    k[0] = fp.store_float(a);
+    k[1] = fp.store_float(b);
+    k[2] = fp.store_float(fp.load(c));
+#else
     // vector addition
     IVP_IF_PREFETCH_ENABLED(IVP_TRUE)
     {
@@ -237,6 +249,7 @@ inline void IVP_U_Float_Point::add_multiple(const IVP_U_Float_Point *v1, const I
         k[1] = b;
         k[2] = c;
     }
+#endif
 }
 
 inline IVP_DOUBLE IVP_U_Float_Point::dot_product(const IVP_U_Float_Point *v2) const
@@ -456,6 +469,17 @@ inline void IVP_U_Matrix::inline_vmult4(const IVP_U_Float_Point *p_in, IVP_U_Flo
 
 void IVP_U_Float_Point::inline_calc_cross_product(const IVP_U_Float_Point *v1, const IVP_U_Float_Point *v2)
 {
+#if IVP_ENABLE_X87_EMULATION
+    // On the x87 the float products are exact; each component is rounded
+    // once, at its float store. An SSE2 build rounds each product to a float.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 a = fp.subtract(fp.multiply(fp.load(v1->k[1]), fp.load(v2->k[2])), fp.multiply(fp.load(v2->k[1]), fp.load(v1->k[2])));
+    const IVP_U_Float80 b = fp.subtract(fp.multiply(fp.load(v1->k[2]), fp.load(v2->k[0])), fp.multiply(fp.load(v2->k[2]), fp.load(v1->k[0])));
+    const IVP_U_Float80 c = fp.subtract(fp.multiply(fp.load(v1->k[0]), fp.load(v2->k[1])), fp.multiply(fp.load(v2->k[0]), fp.load(v1->k[1])));
+    k[0] = fp.store_float(a);
+    k[1] = fp.store_float(b);
+    k[2] = fp.store_float(c);
+#else
     IVP_IF_PREFETCH_ENABLED(IVP_TRUE)
     {
         IVP_DOUBLE a = v1->k[1] * v2->k[2];
@@ -486,6 +510,7 @@ void IVP_U_Float_Point::inline_calc_cross_product(const IVP_U_Float_Point *v1, c
         c -= c2;
         k[2] = (IVP_FLOAT)c;
     }
+#endif
 }
 
 void IVP_U_Float_Point::inline_calc_cross_product_and_normize(const IVP_U_Float_Point *v1, const IVP_U_Float_Point *v2)
