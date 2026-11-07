@@ -576,6 +576,16 @@ void IVP_Core::global_damp_core(IVP_DOUBLE d_time)
     if (my_core->movement_state >= IVP_MT_SLOW)
     {
         IVP_FLOAT s_add_on = 0.1f;
+#if IVP_ENABLE_X87_EMULATION
+        // Retail RVA 0xC610: each rot factor + 0.1f stored as a float, but the speed factor
+        // speed_damp_factor + 0.1f goes to damp_object as a double straight from ST (fstp qword).
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        IVP_U_Float_Point rot_damp_factor;
+        for (int axis = 0; axis < 3; ++axis)
+            rot_damp_factor.k[axis] = fp.store_float(fp.add(fp.load(my_core->rot_speed_damp_factor.k[axis]), fp.load(s_add_on)));
+        my_core->damp_object(d_time, &rot_damp_factor,
+                             fp.store_double(fp.add(fp.load(my_core->speed_damp_factor), fp.load(s_add_on))));
+#else
         IVP_U_Float_Point add_on(s_add_on, s_add_on, s_add_on); // somewhat more dampening for slow objects
         IVP_U_Float_Point rot_damp_factor;
         rot_damp_factor.add(&my_core->rot_speed_damp_factor, &add_on);
@@ -583,6 +593,7 @@ void IVP_Core::global_damp_core(IVP_DOUBLE d_time)
         my_core->damp_object(d_time,
                              &rot_damp_factor,
                              my_core->speed_damp_factor + s_add_on); // 60 1.5
+#endif
     }
     else
     {

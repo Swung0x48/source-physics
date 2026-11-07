@@ -336,12 +336,24 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_Leave_PF(const IVP_Compact_
         {
             if (qr.checks[j] > 0)
                 continue; // on correct side of triangle, no check needed
+#if IVP_ENABLE_X87_EMULATION
+            // Retail RVA 0x313BE: calc_qlen_KK's ST0 is compared with best_len (fcom, C0) and only then stored.
+            IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+            const IVP_U_Float80 len = IVP_CLS.calc_qlen_KK_extended(fp, min_edge, e, m_cache_P, m_cache_F);
+            const IVP_X87_Arithmetic::Relation relation = fp.compare(len, fp.load(best_len));
+            if (relation == IVP_X87_Arithmetic::LESS || relation == IVP_X87_Arithmetic::UNORDERED)
+            {
+                best_len = fp.store_double(len);
+                best_edge = e;
+            }
+#else
             IVP_DOUBLE len = IVP_CLS.calc_qlen_KK(min_edge, e, m_cache_P, m_cache_F);
             if (len < best_len)
             {
                 best_len = len;
                 best_edge = e;
             }
+#endif
         }
     }
     return p_minimize_KK(min_edge, best_edge, m_cache_P, m_cache_F);
@@ -703,6 +715,21 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_Leave_KK(const IVP_Compact_
     }
     // now we are outside, find new KK s vales of other edges of new area
     // which edge to take? calc and compare dists...
+#if IVP_ENABLE_X87_EMULATION
+    {
+        // Retail RVA 0x31FC2-0x32011: dist_next is stored as a double (0x31FE1); dist_prev stays in ST as
+        // calc_qlen_KK returns it and is compared with that double (fcomp, C0 = less or unordered -> prev).
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_DOUBLE dist_next = IVP_CLS.calc_qlen_KK(min_edge, min_plane->get_next(), min_edge_m_cache, min_plane_m_cache);
+        const IVP_U_Float80 dist_prev = IVP_CLS.calc_qlen_KK_extended(fp, min_edge, min_plane->get_prev()->get_opposite(), min_edge_m_cache, min_plane_m_cache);
+        const IVP_X87_Arithmetic::Relation relation = fp.compare(dist_prev, fp.load(dist_next));
+        if (relation == IVP_X87_Arithmetic::LESS || relation == IVP_X87_Arithmetic::UNORDERED)
+        {
+            return p_minimize_KK(min_edge, min_plane->get_prev(), min_edge_m_cache, min_plane_m_cache);
+        }
+        return p_minimize_KK(min_edge, min_plane->get_next(), min_edge_m_cache, min_plane_m_cache);
+    }
+#endif
     {
         IVP_DOUBLE dist_next = IVP_CLS.calc_qlen_KK(min_edge, min_plane->get_next(), min_edge_m_cache, min_plane_m_cache);
         IVP_DOUBLE dist_prev = IVP_CLS.calc_qlen_KK(min_edge, min_plane->get_prev()->get_opposite(), min_edge_m_cache, min_plane_m_cache);
@@ -931,10 +958,26 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_PP(const IVP_Compact_Edge *
         const IVP_Compact_Edge *Pm = Point[1 - ip];
         const IVP_U_Float_Point *Pm_Pmos = IVP_CLS.give_object_coords(Pm, m_cache_Pm);
         IVP_U_Point Pm_P_Pmos;
+#if IVP_ENABLE_X87_EMULATION
+        // Retail RVA 0x325EA: each difference is rounded to a double; dist sums z, y, then x (0x3260B) and is stored
+        // as a double.  Per edge (0x3264D) grad sums x, y, then z, minus dist, and is compared with 0 in ST before its
+        // double store; the edge's quad length (z, y, then x, float differences in ST) goes to isqrt_float (0xDAE0,
+        // two steps, ST0 result) as a float, and the product with the stored grad is compared with s_grad_max in ST.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        for (int axis = 0; axis < 3; ++axis)
+            Pm_P_Pmos.k[axis] = fp.store_double(fp.subtract(fp.load(P_Pmos->k[axis]), fp.load(Pm_Pmos->k[axis])));
+
+        // each edge
+        IVP_DOUBLE dist = fp.store_double(fp.add(fp.add(
+            fp.multiply(fp.load(Pm_Pmos->k[2]), fp.load(Pm_P_Pmos.k[2])),
+            fp.multiply(fp.load(Pm_Pmos->k[1]), fp.load(Pm_P_Pmos.k[1]))),
+            fp.multiply(fp.load(Pm_Pmos->k[0]), fp.load(Pm_P_Pmos.k[0]))));
+#else
         Pm_P_Pmos.subtract(P_Pmos, Pm_Pmos);
 
         // each edge
         IVP_DOUBLE dist = Pm_P_Pmos.dot_product(Pm_Pmos);
+#endif
 
         Pm = Pm->get_prev();
 
@@ -943,6 +986,31 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_PP(const IVP_Compact_Edge *
         for (; 1; e = e->get_opposite()->get_prev())
         {
             const IVP_U_Float_Point *tp_next_os = IVP_CLS.give_object_coords(e, m_cache_Pm);
+#if IVP_ENABLE_X87_EMULATION
+            const IVP_U_Float80 grad_extended = fp.subtract(fp.add(fp.add(
+                fp.multiply(fp.load(tp_next_os->k[0]), fp.load(Pm_P_Pmos.k[0])),
+                fp.multiply(fp.load(tp_next_os->k[1]), fp.load(Pm_P_Pmos.k[1]))),
+                fp.multiply(fp.load(tp_next_os->k[2]), fp.load(Pm_P_Pmos.k[2]))), fp.load(dist));
+            const IVP_DOUBLE grad = fp.store_double(grad_extended);
+            if (fp.compare(grad_extended, fp.load(0.0)) == IVP_X87_Arithmetic::GREATER)
+            {
+                const IVP_U_Float80 dx = fp.subtract(fp.load(tp_next_os->k[0]), fp.load(Pm_Pmos->k[0]));
+                const IVP_U_Float80 dy = fp.subtract(fp.load(tp_next_os->k[1]), fp.load(Pm_Pmos->k[1]));
+                const IVP_U_Float80 dz = fp.subtract(fp.load(tp_next_os->k[2]), fp.load(Pm_Pmos->k[2]));
+                const IVP_FLOAT quad = fp.store_float(fp.add(fp.add(fp.multiply(dz, dz), fp.multiply(dy, dy)), fp.multiply(dx, dx)));
+                const IVP_U_Float80 scaled = fp.multiply(IVP_Fast_Math::isqrt_extended(fp, double(quad), 2), fp.load(grad));
+                if (fp.compare(scaled, fp.load(s_grad_max)) == IVP_X87_Arithmetic::GREATER)
+                { // search for greatest step to walk
+                    // now we found a new smax _value, check for espilon
+                    P_Pmos_max = P_Pmos;
+                    s_grad_max = fp.store_double(scaled);
+                    Kmax = e;
+                    Pmax = Point[ip];
+                    m_cache_K_max = m_cache_Pm;
+                    m_cache_P_max = m_cache[ip];
+                }
+            }
+#else
             IVP_DOUBLE grad = Pm_P_Pmos.dot_product(tp_next_os) - dist;
             if (grad > 0)
             {
@@ -959,6 +1027,7 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_PP(const IVP_Compact_Edge *
                     m_cache_P_max = m_cache[ip];
                 }
             }
+#endif
             if (e == Pm)
                 break;
         }

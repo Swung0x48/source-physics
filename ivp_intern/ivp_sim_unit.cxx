@@ -19,6 +19,7 @@
 #include <ivp_calc_next_psi_solver.hxx>
 #include <ivp_performancecounter.hxx>
 #include <ivp_time.hxx>
+#include <ivu_x87.hxx>
 
 IVP_U_Vector<IVP_Core> IVP_Controller_Independent::empty_list;
 
@@ -966,6 +967,17 @@ void IVP_Simulation_Unit::init_moving_core_for_psi(IVP_Core *core, const IVP_Tim
     core->m_world_f_core_last_psi.vv.add_multiple(&core->pos_world_f_core_last_psi, &core->delta_world_f_core_psis, d_time);
 }
 
+#if IVP_ENABLE_X87_EMULATION
+// Retail RVA 0x12257 / 0x122FF: (x*x + y*y) + z*z stays on the x87 stack, fsubr qword 1.0,
+// one fstp dword; only the sign bit of that float is used (fast-moving test).
+static float ivp_fast_moving_test(const IVP_U_Float_Point *speed)
+{
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    return fp.store_float(fp.subtract(fp.load(IVP_DOUBLE(IVP_OBJECT_MOVING_FAST * IVP_OBJECT_MOVING_FAST)),
+                                      speed->quad_length_extended(fp)));
+}
+#endif
+
 void IVP_Simulation_Unit::simulate_single_sim_unit_psi(IVP_Event_Sim *es, IVP_U_Vector<IVP_Core> *touched_cores)
 {
 #ifdef DEBUG
@@ -1004,7 +1016,11 @@ void IVP_Simulation_Unit::simulate_single_sim_unit_psi(IVP_Event_Sim *es, IVP_U_
 
         my_core->commit_all_async_pushes(); // @@@OS this happens very seldomly !!!!, remove !!!!this necessary as it may happen that core was temporarily_unmovable
                                             // TL: it is also used for delayed pushes and async_pushes
+#if IVP_ENABLE_X87_EMULATION
+        fast_moving_core_p = ivp_fast_moving_test(&my_core->speed);
+#else
         fast_moving_core_p = IVP_OBJECT_MOVING_FAST * IVP_OBJECT_MOVING_FAST - my_core->speed.quad_length();
+#endif
         memcpy(&fast_moving_core, &fast_moving_core_p, sizeof(int));
         my_core->temporarily_unmovable = IVP_FALSE;
         my_core->impacts_since_last_PSI = 0;
@@ -1022,7 +1038,11 @@ void IVP_Simulation_Unit::simulate_single_sim_unit_psi(IVP_Event_Sim *es, IVP_U_
             }
         }
         my_core->commit_all_async_pushes(); // @@@OS this happens very seldomly !!!!, remove !!!!this necessary as it may happen that core was temporarily_unmovable
+#if IVP_ENABLE_X87_EMULATION
+        fast_moving_core_p = ivp_fast_moving_test(&my_core->speed);
+#else
         fast_moving_core_p = IVP_OBJECT_MOVING_FAST * IVP_OBJECT_MOVING_FAST - my_core->speed.quad_length();
+#endif
         memcpy(&fast_moving_core, &fast_moving_core_p, sizeof(int));
         my_core->temporarily_unmovable = IVP_FALSE;
         my_core->impacts_since_last_PSI = 0;

@@ -183,6 +183,10 @@ class IVP_Compact_Ledge_Solver
     IVP_STATIC IVP_DOUBLE calc_qlen_PP_P_space(const IVP_Compact_Ledge *P_ledge, const IVP_Compact_Edge *P, const IVP_U_Point *P_Pos);
     IVP_STATIC IVP_DOUBLE calc_qlen_PK_K_space(const IVP_U_Point *P_in_K_space, const IVP_Compact_Ledge *K_ledge, const IVP_Compact_Edge *K);
     IVP_STATIC IVP_DOUBLE calc_qlen_KK(const IVP_Compact_Edge *K, const IVP_Compact_Edge *L, IVP_Cache_Ledge_Point *m_cache_K, IVP_Cache_Ledge_Point *m_cache_L);
+#if IVP_ENABLE_X87_EMULATION
+    // calc_qlen_KK as retail returns it: in ST, unrounded (its callers compare it before any store)
+    IVP_STATIC IVP_U_Float80 calc_qlen_KK_extended(IVP_X87_Arithmetic &fp, const IVP_Compact_Edge *K, const IVP_Compact_Edge *L, IVP_Cache_Ledge_Point *m_cache_K, IVP_Cache_Ledge_Point *m_cache_L);
+#endif
     IVP_STATIC IVP_DOUBLE calc_qlen_PF_F_space(const IVP_Compact_Ledge *tri_ledge, const IVP_Compact_Triangle *tri, const IVP_U_Point *P_Fos);
 
     /********************************************************************************

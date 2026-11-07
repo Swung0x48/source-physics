@@ -532,6 +532,72 @@ void IVP_Compact_Ledge_Solver::calc_unscaled_qr_vals_F_space(const IVP_Compact_L
     ((IVP_FLOAT *)(res + ivp_uqr_mod_table[this_edge_index + 2]))[0] = q;
 }
 
+#if IVP_ENABLE_X87_EMULATION
+// The point/edge/edge-edge distances below return their result in ST, unrounded, as the 2002 DLL does; the callers
+// of calc_qlen_KK (0x31FF8, 0x313C3) compare that 80-bit value before any store.
+
+// Retail RVA 0x21420: v = p1 - p0 stored as doubles (0x21473-0x21489), w = P - p0 (x, y stored as doubles,
+// z extended); the cross product's x and z are stored as doubles, its y stays extended; the edge e = p0 - p1 is
+// stored as doubles again (0x214E5-0x214F9); times 1 / ((ez^2 + ex^2) + ey^2) with no zero test, returned in ST.
+static IVP_U_Float80 ivp_quad_dist_edge_to_point_extended(IVP_X87_Arithmetic &fp, const IVP_U_Float_Point *p0,
+                                                          const IVP_U_Float_Point *p1, const IVP_U_Point *object_pos)
+{
+    IVP_U_Float80 v[3], e[3];
+    for (int i = 0; i < 3; ++i)
+    {
+        v[i] = fp.load(fp.store_double(fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i]))));
+        e[i] = fp.load(fp.store_double(fp.subtract(fp.load(p0->k[i]), fp.load(p1->k[i]))));
+    }
+    const IVP_U_Float80 wx = fp.load(fp.store_double(fp.subtract(fp.load(object_pos->k[0]), fp.load(p0->k[0]))));
+    const IVP_U_Float80 wy = fp.load(fp.store_double(fp.subtract(fp.load(object_pos->k[1]), fp.load(p0->k[1]))));
+    const IVP_U_Float80 wz = fp.subtract(fp.load(object_pos->k[2]), fp.load(p0->k[2]));
+    const IVP_U_Float80 cx = fp.load(fp.store_double(fp.subtract(fp.multiply(wy, v[2]), fp.multiply(wz, v[1]))));
+    const IVP_U_Float80 cy = fp.subtract(fp.multiply(wz, v[0]), fp.multiply(wx, v[2]));
+    const IVP_U_Float80 cz = fp.load(fp.store_double(fp.subtract(fp.multiply(wx, v[1]), fp.multiply(wy, v[0]))));
+    const IVP_U_Float80 edge_ql = fp.add(fp.add(fp.multiply(e[2], e[2]), fp.multiply(e[0], e[0])), fp.multiply(e[1], e[1]));
+    return fp.multiply(fp.add(fp.add(fp.multiply(cz, cz), fp.multiply(cy, cy)), fp.multiply(cx, cx)),
+                       fp.divide(fp.load(1.0), edge_ql));
+}
+
+// Retail RVA 0x216F0: the offsets and (z*z + y*y) + x*x in ST, returned there.
+static IVP_U_Float80 ivp_qlen_PP_extended(IVP_X87_Arithmetic &fp, const IVP_U_Float_Point *P_os, const IVP_U_Point *P_Pos)
+{
+    IVP_U_Float80 d[3];
+    for (int i = 0; i < 3; ++i)
+        d[i] = fp.subtract(fp.load(P_Pos->k[i]), fp.load(P_os->k[i]));
+    return fp.add(fp.add(fp.multiply(d[2], d[2]), fp.multiply(d[1], d[1])), fp.multiply(d[0], d[0]));
+}
+
+// Retail RVA 0x21740: the callee's ST0 is returned as is; the point side is chosen by fcomp 0.0f / test ah,1 (C0).
+static IVP_U_Float80 ivp_qlen_PK_extended(IVP_X87_Arithmetic &fp, const IVP_U_Point *P_in_K_space, const IVP_Compact_Ledge *K_ledge,
+                                          const IVP_Compact_Edge *K)
+{
+    IVP_Unscaled_S_Result sr;
+    IVP_CLS.calc_unscaled_s_val_K_space(K_ledge, K, P_in_K_space, &sr);
+    if (!sr.is_outside())
+        return ivp_quad_dist_edge_to_point_extended(fp, IVP_CLS.give_object_coords(K, K_ledge),
+                                                    IVP_CLS.give_object_coords(K->get_next(), K_ledge), P_in_K_space);
+    const IVP_Compact_Edge *P = !(sr.checks[0] >= 0.0f) ? K : K->get_next();
+    return ivp_qlen_PP_extended(fp, IVP_CLS.give_object_coords(P, K_ledge), P_in_K_space);
+}
+
+// Retail RVA 0x20DA0: the quad length (x, y, z), both projections (z, y, x) and (a - b)^2 / quad all in ST.
+static IVP_U_Float80 ivp_kk_quad_distance_extended(IVP_X87_Arithmetic &fp, const IVP_KK_Input &kkin)
+{
+    const IVP_U_Point &c = kkin.cross_KL_Los;
+    const IVP_U_Float80 quad_dist = fp.add(fp.add(fp.multiply(fp.load(c.k[0]), fp.load(c.k[0])),
+        fp.multiply(fp.load(c.k[1]), fp.load(c.k[1]))), fp.multiply(fp.load(c.k[2]), fp.load(c.k[2])));
+    if (fp.compare(quad_dist, fp.load(P_DOUBLE_RES * P_DOUBLE_RES)) != IVP_X87_Arithmetic::GREATER)
+        return ivp_qlen_PK_extended(fp, &kkin.K_Los[0], kkin.L->get_compact_ledge(), kkin.L);
+    const IVP_U_Float80 a = fp.add(fp.add(fp.multiply(fp.load(kkin.K_Los[0].k[2]), fp.load(c.k[2])),
+        fp.multiply(fp.load(kkin.K_Los[0].k[1]), fp.load(c.k[1]))), fp.multiply(fp.load(kkin.K_Los[0].k[0]), fp.load(c.k[0])));
+    const IVP_U_Float80 b = fp.add(fp.add(fp.multiply(fp.load(kkin.L_Los[0]->k[2]), fp.load(c.k[2])),
+        fp.multiply(fp.load(kkin.L_Los[0]->k[1]), fp.load(c.k[1]))), fp.multiply(fp.load(kkin.L_Los[0]->k[0]), fp.load(c.k[0])));
+    const IVP_U_Float80 diff = fp.subtract(a, b);
+    return fp.divide(fp.multiply(diff, diff), quad_dist);
+}
+#endif
+
 IVP_KK_Input::IVP_KK_Input(const IVP_Compact_Edge *K_in,
                            const IVP_Compact_Edge *L_in,
                            IVP_Cache_Ledge_Point *m_cache_K,
@@ -561,6 +627,12 @@ IVP_KK_Input::IVP_KK_Input(const IVP_Compact_Edge *K_in,
 
 IVP_DOUBLE IVP_KK_Input::calc_quad_distance_edge_edge()
 {
+#if IVP_ENABLE_X87_EMULATION
+    {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        return fp.return_double(ivp_kk_quad_distance_extended(fp, *this));
+    }
+#endif
     IVP_DOUBLE quad_dist = cross_KL_Los.quad_length();
     if (quad_dist > (P_DOUBLE_RES * P_DOUBLE_RES))
     {  // not parallel
@@ -732,30 +804,14 @@ IVP_DOUBLE IVP_Compact_Ledge_Solver::quad_dist_edge_to_point_K_space(const IVP_C
     const IVP_U_Float_Point *p1 = IVP_CLS.give_object_coords(K->get_next(), ledge_K);
 #if IVP_ENABLE_X87_EMULATION
     {
-        // Retail RVA 0x21420: v = p1 - p0, w = P - p0 (x, y stored as doubles,
-        // z extended); the cross product's x and z are stored as doubles, its
-        // y stays extended; times 1 / ((ez^2 + ex^2) + ey^2), returned in ST.
         IVP_X87_Arithmetic fp(IVP_X87_Control::current());
-        IVP_U_Float80 v[3];
-        for (int i = 0; i < 3; ++i)
-            v[i] = fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i]));
-        const IVP_U_Float80 wx = fp.load(fp.store_double(fp.subtract(fp.load(object_pos->k[0]), fp.load(p0->k[0]))));
-        const IVP_U_Float80 wy = fp.load(fp.store_double(fp.subtract(fp.load(object_pos->k[1]), fp.load(p0->k[1]))));
-        const IVP_U_Float80 wz = fp.subtract(fp.load(object_pos->k[2]), fp.load(p0->k[2]));
-        const IVP_U_Float80 cx = fp.load(fp.store_double(fp.subtract(fp.multiply(wy, v[2]), fp.multiply(wz, v[1]))));
-        const IVP_U_Float80 cy = fp.subtract(fp.multiply(wz, v[0]), fp.multiply(wx, v[2]));
-        const IVP_U_Float80 cz = fp.load(fp.store_double(fp.subtract(fp.multiply(wx, v[1]), fp.multiply(wy, v[0]))));
-        const IVP_U_Float80 edge_ql = fp.add(fp.add(fp.multiply(v[2], v[2]), fp.multiply(v[0], v[0])), fp.multiply(v[1], v[1]));
-        if (fp.compare(edge_ql, fp.load(P_DOUBLE_EPS)) == IVP_X87_Arithmetic::LESS) return 0.0;
-        return fp.return_double(fp.multiply(fp.add(fp.add(fp.multiply(cz, cz), fp.multiply(cy, cy)), fp.multiply(cx, cx)),
-                                            fp.divide(fp.load(1.0), edge_ql)));
+        return fp.return_double(ivp_quad_dist_edge_to_point_extended(fp, p0, p1, object_pos));
     }
 #endif
     IVP_U_Point vec_world;
     vec_world.inline_set_vert_to_area_defined_by_three_points(p0, p1, object_pos);
 
-    IVP_DOUBLE edge_ql = p0->quad_distance_to(p1);
-    if (edge_ql < P_DOUBLE_EPS) return 0.0;
+    IVP_DOUBLE edge_ql = p0->quad_distance_to(p1); // retail (0x2151F) divides without a zero test
     return vec_world.quad_length() / edge_ql;
 }
 
@@ -805,12 +861,8 @@ IVP_DOUBLE IVP_Compact_Ledge_Solver::calc_qlen_PP_P_space(const IVP_Compact_Ledg
 {
     const IVP_U_Float_Point *P_os = give_object_coords(P, P_ledge);
 #if IVP_ENABLE_X87_EMULATION
-    // Retail RVA 0x216F0: the offsets and (z*z + y*y) + x*x in ST, returned there.
     IVP_X87_Arithmetic fp(IVP_X87_Control::current());
-    IVP_U_Float80 d[3];
-    for (int i = 0; i < 3; ++i)
-        d[i] = fp.subtract(fp.load(P_Pos->k[i]), fp.load(P_os->k[i]));
-    return fp.return_double(fp.add(fp.add(fp.multiply(d[2], d[2]), fp.multiply(d[1], d[1])), fp.multiply(d[0], d[0])));
+    return fp.return_double(ivp_qlen_PP_extended(fp, P_os, P_Pos));
 #else
     return P_Pos->quad_distance_to(P_os);
 #endif
@@ -826,6 +878,12 @@ IVP_DOUBLE IVP_Compact_Ledge_Solver::calc_qlen_PK_K_space(const IVP_U_Point *P_i
 		printf("erroradress %lx\n",adress);
 		IVP_ASSERT(1==0);
 	}
+#endif
+#if IVP_ENABLE_X87_EMULATION
+    {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        return fp.return_double(ivp_qlen_PK_extended(fp, P_in_K_space, K_ledge, K));
+    }
 #endif
 
     IVP_Unscaled_S_Result sr;
@@ -851,8 +909,66 @@ void IVP_Compact_Ledge_Solver::give_world_coords_AT(const IVP_Compact_Edge *edge
     clp->get_object_cache()->transform_position_to_world_coords(p_os, p_ws_out);
 }
 
+#if IVP_ENABLE_X87_EMULATION
+// Retail RVA 0x21800: the distance of the case is returned in ST as its callee leaves it; the checks are compared
+// with fcomp 0.0f / test ah,0x41 (PK unless > 0); outside both edges the minimum is kept as a double (fcom C0,
+// fstp qword) and reloaded.
+IVP_U_Float80 IVP_Compact_Ledge_Solver::calc_qlen_KK_extended(IVP_X87_Arithmetic &fp, const IVP_Compact_Edge *K, const IVP_Compact_Edge *L,
+                                                              IVP_Cache_Ledge_Point *m_cache_K, IVP_Cache_Ledge_Point *m_cache_L)
+{
+    IVP_KK_Input kkin(K, L, m_cache_K, m_cache_L);
+    IVP_Unscaled_KK_Result kkr;
+    IVP_CLS.calc_unscaled_KK_vals(kkin, &kkr);
+
+    if (!kkr.is_outside_L())
+    {
+        if (!(kkr.checks_K[0] > 0.0f))
+            return ivp_qlen_PK_extended(fp, &kkin.K_Los[0], m_cache_L->get_compact_ledge(), L);
+        if (!(kkr.checks_K[1] > 0.0f))
+            return ivp_qlen_PK_extended(fp, &kkin.K_Los[1], m_cache_L->get_compact_ledge(), L);
+        return ivp_kk_quad_distance_extended(fp, kkin);
+    }
+    if (!kkr.is_outside_K())
+    {
+        for (int i = 0; i <= 1; i++)
+        {
+            if (!(kkr.checks_L[i] > 0.0f))
+            {
+                IVP_U_Point L_Kos;
+                IVP_CLS.calc_pos_other_space(i ? L->get_next() : L, m_cache_L, m_cache_K, &L_Kos);
+                return ivp_qlen_PK_extended(fp, &L_Kos, m_cache_K->get_compact_ledge(), K);
+            }
+        }
+        CORE;
+    }
+
+    const IVP_Compact_Edge *pL[2] = {L, L->get_next()};
+    IVP_DOUBLE min_len = P_DOUBLE_MAX;
+    for (int i = 0; i <= 1; i++)
+    {
+        IVP_U_Point L_Kos;
+        IVP_CLS.calc_pos_other_space(pL[i], m_cache_L, m_cache_K, &L_Kos);
+        const IVP_U_Float80 h_len[2] = {ivp_qlen_PK_extended(fp, &L_Kos, m_cache_K->get_compact_ledge(), K),
+                                        ivp_qlen_PK_extended(fp, &kkin.K_Los[i], m_cache_L->get_compact_ledge(), L)};
+        for (int j = 0; j <= 1; j++)
+        {
+            const IVP_X87_Arithmetic::Relation r = fp.compare(h_len[j], fp.load(min_len));
+            if (r == IVP_X87_Arithmetic::LESS || r == IVP_X87_Arithmetic::UNORDERED)
+                min_len = fp.store_double(h_len[j]);
+        }
+    }
+    return fp.load(min_len);
+}
+#endif
+
 IVP_DOUBLE IVP_Compact_Ledge_Solver::calc_qlen_KK(const IVP_Compact_Edge *K, const IVP_Compact_Edge *L, IVP_Cache_Ledge_Point *m_cache_K, IVP_Cache_Ledge_Point *m_cache_L)
 {
+#if IVP_ENABLE_X87_EMULATION
+    {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        return fp.return_double(calc_qlen_KK_extended(fp, K, L, m_cache_K, m_cache_L));
+    }
+#endif
     IVP_KK_Input kkin(K, L, m_cache_K, m_cache_L);
     IVP_Unscaled_KK_Result kkr;
     IVP_CLS.calc_unscaled_KK_vals(kkin, &kkr);
