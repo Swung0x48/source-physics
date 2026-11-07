@@ -338,7 +338,21 @@ void IVP_U_Float_Point::set_orthogonal_part(const IVP_U_Float_Point *vector, con
 #if !defined(IVP_NO_DOUBLE)
 void IVP_U_Point::calc_cross_product(const IVP_U_Point *v1, const IVP_U_Point *v2)
 {
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0xE280: the double products and differences in ST, each
+    // component rounded once at its double store (all read before any write).
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 a0 = fp.load(v1->k[0]), a1 = fp.load(v1->k[1]), a2 = fp.load(v1->k[2]);
+    const IVP_U_Float80 b0 = fp.load(v2->k[0]), b1 = fp.load(v2->k[1]), b2 = fp.load(v2->k[2]);
+    const IVP_U_Float80 x = fp.subtract(fp.multiply(a1, b2), fp.multiply(a2, b1));
+    const IVP_U_Float80 y = fp.subtract(fp.multiply(b0, a2), fp.multiply(a0, b2));
+    const IVP_U_Float80 z = fp.subtract(fp.multiply(a0, b1), fp.multiply(a1, b0));
+    k[0] = fp.store_double(x);
+    k[1] = fp.store_double(y);
+    k[2] = fp.store_double(z);
+#else
     inline_calc_cross_product(v1, v2);
+#endif
 }
 #endif
 

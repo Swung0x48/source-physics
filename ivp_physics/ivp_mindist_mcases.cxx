@@ -1027,6 +1027,15 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_BK(IVP_Cache_Ball *m_cache_
     return p_minimize_Leave_BK(m_cache_B, K, m_cache_K);
 }
 
+#if IVP_ENABLE_X87_EMULATION
+// (z*z + y*y) + x*x in ST (retail RVA 0x32C71 for both squared lengths).
+static IVP_U_Float80 ivp_mcases_qlen_zyx(IVP_X87_Arithmetic &fp, const IVP_U_Point *p)
+{
+    const IVP_U_Float80 x = fp.load(p->k[0]), y = fp.load(p->k[1]), z = fp.load(p->k[2]);
+    return fp.add(fp.add(fp.multiply(z, z), fp.multiply(y, y)), fp.multiply(x, x));
+}
+#endif
+
 IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_Leave_BK(IVP_Cache_Ball *m_cache_ball, const IVP_Compact_Edge *K, IVP_Cache_Ledge_Point *m_cache_K)
 {
     if (--P_Finish_Counter < 0)
@@ -1066,9 +1075,20 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_Leave_BK(IVP_Cache_Ball *m_
     IVP_U_Point hesse_oppo_tri_os;
     hesse_oppo_tri_os.calc_cross_product(&vec_K_oppo_tri, &vec_K_ks); // v. to oppo tri
 
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0x329FE: the point offset is stored as doubles; both
+    // plane distances sum (z, y, x) in ST and are stored as doubles.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    for (int i = 0; i < 3; ++i)
+        vec_K_P.k[i] = fp.store_double(fp.subtract(fp.load(p_ks.k[i]), fp.load(k_start_os->k[i])));
+    IVP_DOUBLE vert[2];
+    vert[0] = fp.store_double(vec_K_P.dot_product_extended(fp, &hesse_tri_os));
+    vert[1] = fp.store_double(vec_K_P.dot_product_extended(fp, &hesse_oppo_tri_os));
+#else
     IVP_DOUBLE vert[2]; // dist between point and triangle, oppo tri
     vert[0] = vec_K_P.dot_product(&hesse_tri_os);
     vert[1] = vec_K_P.dot_product(&hesse_oppo_tri_os);
+#endif
 
     // new verion using qr
     IVP_Unscaled_QR_Result qr0, qr1;
@@ -1103,6 +1123,28 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_Leave_BK(IVP_Cache_Ball *m_
     IVP_U_Point Lot2; // unnormized Lot
     Lot2.calc_cross_product(&vec_K_ks, &vec_K_P);
 
+#if IVP_ENABLE_X87_EMULATION
+    // RVA 0x32C71: 1 / |K|^2 stored as a double but used extended for the
+    // squared distance (stored); the plane factor -(inv_len * iqK_len) stays
+    // extended, the plane stores x straight and spills y and z.
+    {
+        const IVP_U_Float80 K_ql = ivp_mcases_qlen_zyx(fp, &vec_K_ks);
+        if (fp.compare(K_ql, fp.load(P_DOUBLE_EPS)) == IVP_X87_Arithmetic::LESS) return IVP_MRC_BACKSIDE;
+        const IVP_U_Float80 iqK = fp.divide(fp.load(1.0), K_ql);
+        const IVP_DOUBLE iqK_len = fp.store_double(iqK);
+        const IVP_DOUBLE qdist = fp.store_double(fp.multiply(ivp_mcases_qlen_zyx(fp, &Lot2), iqK));
+        const IVP_DOUBLE inv_len = IVP_Inline_Math::isqrt_double(qdist);
+        mindist->len_numerator = fp.store_float(fp.subtract(fp.multiply(fp.load(inv_len), fp.load(qdist)), fp.load(mindist->sum_extra_radius)));
+        Lot2.calc_cross_product(&vec_K_ks, &Lot2); // does change the length !!!
+        m_cache_K->get_object_cache()->transform_vector_to_world_coords(&Lot2, &Lot2);
+        const IVP_U_Float80 f = fp.negate(fp.multiply(fp.load(inv_len), fp.load(iqK_len)));
+        const IVP_DOUBLE y = fp.store_double(fp.multiply(fp.load(Lot2.k[1]), f));
+        const IVP_DOUBLE z = fp.store_double(fp.multiply(fp.load(Lot2.k[2]), f));
+        mindist->contact_plane.k[0] = fp.store_float(fp.multiply(fp.load(Lot2.k[0]), f));
+        mindist->contact_plane.k[1] = fp.store_float(fp.load(y));
+        mindist->contact_plane.k[2] = fp.store_float(fp.load(z));
+    }
+#else
     IVP_DOUBLE K_ql = vec_K_ks.quad_length();
     if (K_ql < P_DOUBLE_EPS) return IVP_MRC_BACKSIDE;
     IVP_DOUBLE iqK_len = 1.0f / K_ql;
@@ -1115,6 +1157,7 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_Leave_BK(IVP_Cache_Ball *m_
     m_cache_K->get_object_cache()->transform_vector_to_world_coords(&Lot2, &Lot2);
 
     mindist->contact_plane.set_multiple(&Lot2, -inv_len * iqK_len);
+#endif
 
 #ifdef IVP_HALFSPACE_OPTIMIZATION_ENABLED
     mindist->contact_dot_diff_center = calc_contact_center_projection(&m_cache_ball->cache_object->core_pos, &m_cache_K->get_object_cache()->core_pos,&mindist->contact_plane);

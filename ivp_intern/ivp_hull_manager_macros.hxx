@@ -34,6 +34,19 @@ void IVP_Hull_Manager::check_hull_synapses(IVP_Environment *pEnv)
 
 void IVP_Hull_Manager::increase_hull_by_x(IVP_Time t_now, IVP_FLOAT delta_time, IVP_FLOAT gradient_, IVP_FLOAT center_gradient_)
 {
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0x1E750: dt and the new gradient's product stay in ST; each
+    // stored value is rounded once, at its float store.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 dt = fp.subtract(fp.load(t_now.get_seconds()), fp.load(last_vpsi_time.get_seconds()));
+    last_vpsi_time = t_now;
+    hull_value_last_vpsi = fp.store_float(fp.add(fp.multiply(dt, fp.load(gradient)), fp.load(hull_value_last_vpsi)));
+    hull_center_value_last_vpsi = fp.store_float(fp.add(fp.multiply(dt, fp.load(center_gradient)), fp.load(hull_center_value_last_vpsi)));
+    center_gradient = center_gradient_;
+    const IVP_U_Float80 g = fp.multiply(fp.load(gradient_), fp.load(IVP_HULL_MANAGER_GRADIENT_FACTOR));
+    gradient = fp.store_float(g);
+    hull_value_next_psi = fp.store_float(fp.add(fp.multiply(g, fp.load(delta_time)), fp.load(hull_value_last_vpsi)));
+#else
     IVP_FLOAT dt = t_now - last_vpsi_time;
     hull_value_last_vpsi += gradient * dt;
     hull_center_value_last_vpsi += center_gradient * dt;
@@ -43,6 +56,7 @@ void IVP_Hull_Manager::increase_hull_by_x(IVP_Time t_now, IVP_FLOAT delta_time, 
 
     IVP_FLOAT delta = delta_time * gradient;
     hull_value_next_psi = hull_value_last_vpsi + delta;
+#endif
     IVP_ASSERT(hull_value_next_psi >= 0.0f);
 }
 

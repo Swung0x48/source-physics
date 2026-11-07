@@ -359,6 +359,23 @@ void IVP_Compact_Ledge_Solver::calc_unscaled_s_val_K_space(const IVP_Compact_Led
 
     const IVP_U_Float_Point *p0 = give_object_coords(edge, c_ledge);
     const IVP_U_Float_Point *p1 = give_object_coords(edge->get_next(), c_ledge);
+#if IVP_ENABLE_X87_EMULATION
+    {
+        // Retail RVA 0x20A10: d0 stays extended, d1 is stored as doubles;
+        // both projections sum (z, y, x) in ST and are stored as floats.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        IVP_U_Float80 d[3], d0[3], d1[3];
+        for (int i = 0; i < 3; ++i)
+        {
+            d[i] = fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i]));
+            d0[i] = fp.subtract(fp.load(p0->k[i]), fp.load(p_object->k[i]));
+            d1[i] = fp.load(fp.store_double(fp.subtract(fp.load(p1->k[i]), fp.load(p_object->k[i]))));
+        }
+        result->checks[0] = fp.store_float(fp.negate(fp.add(fp.add(fp.multiply(d[2], d0[2]), fp.multiply(d[1], d0[1])), fp.multiply(d0[0], d[0]))));
+        result->checks[1] = fp.store_float(fp.add(fp.add(fp.multiply(d[2], d1[2]), fp.multiply(d[1], d1[1])), fp.multiply(d1[0], d[0])));
+        return;
+    }
+#endif
     IVP_U_Point d;
     d.subtract(p1, p0);
     IVP_U_Point d0;
@@ -454,6 +471,36 @@ void IVP_Compact_Ledge_Solver::calc_unscaled_qr_vals_F_space(const IVP_Compact_L
     const IVP_U_Float_Point *tp = give_object_coords(triangle->get_edge(0), c_ledge);
     const IVP_U_Float_Point *tp_next = give_object_coords(triangle->get_edge(1), c_ledge);
     const IVP_U_Float_Point *tp_prev = give_object_coords(triangle->get_edge(2), c_ledge);
+
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0x20AD0. The edge vectors are exact; QQ, RR, QR, the point
+    // offset, Det, sq and sr are stored as doubles, each summed in ST in
+    // this order; q and r stay extended into the float checks.
+    {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        IVP_U_Float80 Q[3], R[3], P[3];
+        for (int i = 0; i < 3; ++i)
+        {
+            Q[i] = fp.subtract(fp.load(tp->k[i]), fp.load(tp_next->k[i]));
+            R[i] = fp.subtract(fp.load(tp_prev->k[i]), fp.load(tp_next->k[i]));
+            P[i] = fp.load(fp.store_double(fp.subtract(fp.load(p_object->k[i]), fp.load(tp_next->k[i]))));
+        }
+        const IVP_U_Float80 QQ = fp.load(fp.store_double(fp.add(fp.add(fp.multiply(Q[2], Q[2]), fp.multiply(Q[0], Q[0])), fp.multiply(Q[1], Q[1]))));
+        const IVP_U_Float80 RR = fp.load(fp.store_double(fp.add(fp.add(fp.multiply(R[2], R[2]), fp.multiply(R[1], R[1])), fp.multiply(R[0], R[0]))));
+        const IVP_U_Float80 QR = fp.load(fp.store_double(fp.add(fp.add(fp.multiply(R[2], Q[2]), fp.multiply(R[1], Q[1])), fp.multiply(R[0], Q[0]))));
+        const IVP_U_Float80 Det = fp.load(fp.store_double(fp.subtract(fp.multiply(RR, QQ), fp.multiply(QR, QR))));
+        const IVP_U_Float80 sq = fp.load(fp.store_double(fp.add(fp.add(fp.multiply(P[2], Q[2]), fp.multiply(P[1], Q[1])), fp.multiply(P[0], Q[0]))));
+        const IVP_U_Float80 sr = fp.load(fp.store_double(fp.add(fp.add(fp.multiply(P[2], R[2]), fp.multiply(P[1], R[1])), fp.multiply(P[0], R[0]))));
+        const IVP_U_Float80 q = fp.subtract(fp.multiply(sq, RR), fp.multiply(sr, QR));
+        const IVP_U_Float80 r = fp.subtract(fp.multiply(sr, QQ), fp.multiply(sq, QR));
+        result->scale = fp.store_float(Det);
+        char *res = (char *)&result->checks[0];
+        ((IVP_FLOAT *)(res + ivp_uqr_mod_table[this_edge_index]))[0] = fp.store_float(r);
+        ((IVP_FLOAT *)(res + ivp_uqr_mod_table[this_edge_index + 1]))[0] = fp.store_float(fp.subtract(fp.subtract(Det, q), r));
+        ((IVP_FLOAT *)(res + ivp_uqr_mod_table[this_edge_index + 2]))[0] = fp.store_float(q);
+        return;
+    }
+#endif
 
     IVP_U_Point R, Q, Pvec;
     Q.subtract(tp, tp_next);
@@ -682,6 +729,27 @@ IVP_DOUBLE IVP_Compact_Ledge_Solver::quad_dist_edge_to_point_K_space(const IVP_C
 {
     const IVP_U_Float_Point *p0 = IVP_CLS.give_object_coords(K, ledge_K);
     const IVP_U_Float_Point *p1 = IVP_CLS.give_object_coords(K->get_next(), ledge_K);
+#if IVP_ENABLE_X87_EMULATION
+    {
+        // Retail RVA 0x21420: v = p1 - p0, w = P - p0 (x, y stored as doubles,
+        // z extended); the cross product's x and z are stored as doubles, its
+        // y stays extended; times 1 / ((ez^2 + ex^2) + ey^2), returned in ST.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        IVP_U_Float80 v[3];
+        for (int i = 0; i < 3; ++i)
+            v[i] = fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i]));
+        const IVP_U_Float80 wx = fp.load(fp.store_double(fp.subtract(fp.load(object_pos->k[0]), fp.load(p0->k[0]))));
+        const IVP_U_Float80 wy = fp.load(fp.store_double(fp.subtract(fp.load(object_pos->k[1]), fp.load(p0->k[1]))));
+        const IVP_U_Float80 wz = fp.subtract(fp.load(object_pos->k[2]), fp.load(p0->k[2]));
+        const IVP_U_Float80 cx = fp.load(fp.store_double(fp.subtract(fp.multiply(wy, v[2]), fp.multiply(wz, v[1]))));
+        const IVP_U_Float80 cy = fp.subtract(fp.multiply(wz, v[0]), fp.multiply(wx, v[2]));
+        const IVP_U_Float80 cz = fp.load(fp.store_double(fp.subtract(fp.multiply(wx, v[1]), fp.multiply(wy, v[0]))));
+        const IVP_U_Float80 edge_ql = fp.add(fp.add(fp.multiply(v[2], v[2]), fp.multiply(v[0], v[0])), fp.multiply(v[1], v[1]));
+        if (fp.compare(edge_ql, fp.load(P_DOUBLE_EPS)) == IVP_X87_Arithmetic::LESS) return 0.0;
+        return fp.return_double(fp.multiply(fp.add(fp.add(fp.multiply(cz, cz), fp.multiply(cy, cy)), fp.multiply(cx, cx)),
+                                            fp.divide(fp.load(1.0), edge_ql)));
+    }
+#endif
     IVP_U_Point vec_world;
     vec_world.inline_set_vert_to_area_defined_by_three_points(p0, p1, object_pos);
 
@@ -735,7 +803,16 @@ IVP_DOUBLE IVP_Compact_Ledge_Solver::calc_qlen_PF_F_space(const IVP_Compact_Ledg
 IVP_DOUBLE IVP_Compact_Ledge_Solver::calc_qlen_PP_P_space(const IVP_Compact_Ledge *P_ledge, const IVP_Compact_Edge *P, const IVP_U_Point *P_Pos)
 {
     const IVP_U_Float_Point *P_os = give_object_coords(P, P_ledge);
+#if IVP_ENABLE_X87_EMULATION
+    // Retail RVA 0x216F0: the offsets and (z*z + y*y) + x*x in ST, returned there.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    IVP_U_Float80 d[3];
+    for (int i = 0; i < 3; ++i)
+        d[i] = fp.subtract(fp.load(P_Pos->k[i]), fp.load(P_os->k[i]));
+    return fp.return_double(fp.add(fp.add(fp.multiply(d[2], d[2]), fp.multiply(d[1], d[1])), fp.multiply(d[0], d[0])));
+#else
     return P_Pos->quad_distance_to(P_os);
+#endif
 }
 
 IVP_DOUBLE IVP_Compact_Ledge_Solver::calc_qlen_PK_K_space(const IVP_U_Point *P_in_K_space, const IVP_Compact_Ledge *K_ledge, const IVP_Compact_Edge *K)

@@ -8,6 +8,9 @@ class IVP_Listener_Hull;
 
 #include <ivu_min_list.hxx>
 #include <ivp_listener_hull.hxx>
+#if IVP_ENABLE_X87_EMULATION
+#include <ivu_x87.hxx>
+#endif
 
 #define IVP_MAX_TIME_WITHOUT_RESET 10.0f          /* seconds */
 #define IVP_HULL_MANAGER_GRADIENT_FACTOR 1.00001f /* high enough that till MAX_TIME no bits are lost */
@@ -42,6 +45,24 @@ public:
     inline IVP_FLOAT insert_synapse(IVP_Listener_Hull *syn, IVP_Time t_now, IVP_DOUBLE delta_valid_hull_time);      // assert delta_valid_hull_time ensures no events till next PSI
     inline IVP_FLOAT insert_lazy_synapse(IVP_Listener_Hull *syn, IVP_Time t_now, IVP_DOUBLE delta_valid_hull_time); // same, but adds some extra time to avoid assert on delta_valid_hull_time
     inline void update_synapse(IVP_Listener_Hull *syn, IVP_Time t_now, IVP_DOUBLE delta_valid_hull_time);
+#if IVP_ENABLE_X87_EMULATION
+    // get_angular_hull_time without its float return rounding (inlined into
+    // retail's mindist_hull_limit_exceeded_event, RVA 0x17EE3).
+    inline IVP_U_Float80 get_angular_hull_time_x87(IVP_X87_Arithmetic &fp, const IVP_U_Float80 &now) const
+    {
+        return fp.add(fp.multiply(fp.subtract(fp.load(gradient), fp.load(center_gradient)), fp.subtract(now, fp.load(last_vpsi_time.get_seconds()))),
+                      fp.subtract(fp.load(hull_value_last_vpsi), fp.load(hull_center_value_last_vpsi)));
+    }
+    // (t_now - last_vpsi_time) * gradient + hull_value_last_vpsi + delta in ST, one
+    // rounding at the float key (retail inlines it this way, e.g. RVA 0x17F80).
+    inline void update_synapse_x87(IVP_X87_Arithmetic &fp, IVP_Listener_Hull *syn, IVP_Time t_now, const IVP_U_Float80 &delta)
+    {
+        sorted_synapses.remove_minlist_elem(syn->minlist_index);
+        const IVP_U_Float80 val = fp.add(fp.add(fp.multiply(fp.subtract(fp.load(t_now.get_seconds()), fp.load(last_vpsi_time.get_seconds())),
+                                                            fp.load(gradient)), fp.load(hull_value_last_vpsi)), delta);
+        syn->minlist_index = sorted_synapses.add((void *)syn, fp.store_float(val));
+    }
+#endif
     inline void update_lazy_synapse(IVP_Listener_Hull *syn, IVP_Time t_now, IVP_DOUBLE delta_valid_hull_time);
     inline void remove_synapse(IVP_Listener_Hull *syn);
 

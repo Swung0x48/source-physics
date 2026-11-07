@@ -1320,6 +1320,51 @@ void IVP_Mindist::mindist_hull_limit_exceeded_event(IVP_HTIME hull_intrusion_val
     }
 
     IVP_Time current_time = obj0->get_environment()->get_current_time();
+#if IVP_ENABLE_X87_EMULATION && defined(IVP_HALFSPACE_OPTIMIZATION_ENABLED)
+    if (!disable_halfspace_optimization)
+    {
+        // Retail RVA 0x17DA4: both centers through the out-of-line add_multiple
+        // (0x12470) with the time difference passed as a double; the halfspace
+        // estimate in ST (float terms unrounded), stored as a double; the hull
+        // updates add dist_factor * speed_i in ST before the float.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_U_Float80 now = fp.load(current_time.get_seconds());
+        IVP_U_Float80 c0[3], c1[3];
+        {
+            const IVP_U_Float80 dt0 = fp.load(fp.store_double(fp.subtract(now, fp.load(core0->time_of_last_psi.get_seconds()))));
+            const IVP_U_Float80 dt1 = fp.load(fp.store_double(fp.subtract(now, fp.load(core1->time_of_last_psi.get_seconds()))));
+            for (int i = 0; i < 3; ++i)
+            {
+                c0[i] = fp.load(fp.store_double(fp.add(fp.multiply(fp.load(core0->delta_world_f_core_psis.k[i]), dt0), fp.load(core0->pos_world_f_core_last_psi.k[i]))));
+                c1[i] = fp.load(fp.store_double(fp.add(fp.multiply(fp.load(core1->delta_world_f_core_psis.k[i]), dt1), fp.load(core1->pos_world_f_core_last_psi.k[i]))));
+            }
+        }
+        IVP_U_Float80 d[3];
+        for (int i = 0; i < 3; ++i)
+            d[i] = fp.load(fp.store_double(fp.subtract(c0[i], c1[i])));
+        const IVP_U_Float80 eps = fp.load(P_DOUBLE_EPS);
+        const IVP_U_Float80 speed0 = fp.add(fp.add(fp.load(core0->max_surface_rot_speed), fp.load(core0->current_speed)), eps);
+        const IVP_U_Float80 speed1 = fp.add(fp.add(fp.load(core1->max_surface_rot_speed), fp.load(core1->current_speed)), eps);
+        const IVP_U_Float80 speed = fp.add(speed0, speed1);
+        const IVP_U_Float80 new_dot = fp.add(fp.add(fp.multiply(fp.load(contact_plane.k[1]), d[1]), fp.multiply(fp.load(contact_plane.k[2]), d[2])),
+                                             fp.multiply(fp.load(contact_plane.k[0]), d[0]));
+        const IVP_U_Float80 sum_angular = fp.add(m0->get_angular_hull_time_x87(fp, now), m1->get_angular_hull_time_x87(fp, now));
+        const IVP_U_Float80 estimated = fp.add(fp.subtract(fp.subtract(fp.load(this->get_length()), fp.subtract(sum_angular, fp.load(this->sum_angular_hull_time))),
+                                                           fp.subtract(fp.load(contact_dot_diff_center), new_dot)), fp.load(hull_intrusion_value));
+        const IVP_DOUBLE estimated_distance = fp.store_double(estimated);
+        const IVP_U_Float80 limit = fp.multiply(fp.multiply(fp.load(obj0->get_environment()->get_delta_PSI_time()), speed), fp.load(6.0));
+        if (fp.compare(estimated, limit) == IVP_X87_Arithmetic::GREATER)
+        {
+            this->sum_angular_hull_time = fp.store_double(sum_angular);
+            this->contact_dot_diff_center = fp.store_float(new_dot);
+            this->len_numerator = fp.store_float(fp.subtract(fp.load(estimated_distance), fp.load(hull_intrusion_value)));
+            const IVP_U_Float80 dist_factor = fp.load(fp.store_double(fp.divide(fp.load(estimated_distance), speed)));
+            m0->update_synapse_x87(fp, syn0, current_time, fp.multiply(dist_factor, fp.load(fp.store_double(speed0))));
+            m1->update_synapse_x87(fp, syn1, current_time, fp.multiply(dist_factor, fp.load(fp.store_double(speed1))));
+            return;
+        }
+    }
+#endif
     IVP_U_Point center0;
     core0->inline_calc_at_position(current_time, &center0);
     IVP_U_Point center1;
