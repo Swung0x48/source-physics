@@ -70,12 +70,23 @@ void qh_backnormal (realT **rows, int numrow, int numcol, boolT sign,
     ak= normalp+1;
     // RVA 0x4E4C0 writes every subtraction to binary64 before the next term.
     // An accumulated x87 register changes small plane-normal components.
+#if IVP_ENABLE_X87_EMULATION
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    for(j= i+1; j < numcol; j++, ai++, ak++)
+      *normalp= fp.store_double(fp.subtract(fp.load(*normalp), fp.multiply(fp.load(*ak), fp.load(*ai))));
+    diagonal= (rows[i])[i];
+    if (fabs_(diagonal) > qh MINdenom_2) {
+      *normalp= fp.store_double(fp.divide(fp.load(*normalp), fp.load(diagonal)));
+      normalp--;
+    }
+#else
     volatile coordT *component=normalp;
     for(j= i+1; j < numcol; j++)
       *component -= *ai++ * *ak++;
     diagonal= (rows[i])[i];
     if (fabs_(diagonal) > qh MINdenom_2)
       *(normalp--) /= diagonal;
+#endif
     else {
       waszero= False;
       *normalp= qh_divzero (*normalp, diagonal, qh MINdenom_1_2, &waszero);
@@ -116,6 +127,18 @@ void qh_backnormal (realT **rows, int numrow, int numcol, boolT sign,
 void qh_distplane (pointT *point, facetT *facet, realT *dist) {
   coordT *normal= facet->normal, *coordp, randr;
   int k;
+#if IVP_ENABLE_X87_EMULATION
+  // 0x4E6A0, dimensions 2 to 8: the products summed from the last coordinate down on the x87 stack, the offset
+  // added last, one rounding when the distance is stored
+  if (qh hull_dim >= 2 && qh hull_dim <= 8) {
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    k= qh hull_dim - 1;
+    IVP_U_Float80 sum= fp.multiply(fp.load(normal[k]), fp.load(point[k]));
+    while (k--)
+      sum= fp.add(sum, fp.multiply(fp.load(normal[k]), fp.load(point[k])));
+    *dist= fp.store_double(fp.add(sum, fp.load(facet->offset)));
+  }else
+#endif
   
   switch(qh hull_dim){
   case 2:
@@ -577,9 +600,18 @@ void qh_gausselim(realT **rows, int numrow, int numcol, boolT *sign, boolT *near
     for(i= k+1; i < numrow; i++) {
       ai= rows[i] + k;
       ak= pivotrow;
+#if IVP_ENABLE_X87_EMULATION
+      {
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_U_Float80 ratio= fp.divide(fp.load(*ai++), fp.load(pivot));
+        for(j= numcol - (k+1); j--; ak++, ai++)
+          *ai= fp.store_double(fp.subtract(fp.load(*ai), fp.multiply(ratio, fp.load(*ak))));
+      }
+#else
       n= (*ai++)/pivot;   /* divzero() not needed since |pivot| >= |*ai| */
       for(j= numcol - (k+1); j--; )
 	*ai++ -= n * *ak++;
+#endif
     }
   LABELnextcol:
     ;
@@ -637,6 +669,19 @@ pointT *qh_getcenter(setT *vertices) {
     qh_errexit (qh_ERRqhull, NULL, NULL);
   }
   center= (pointT *)qh_memalloc(qh normal_size);
+#if IVP_ENABLE_X87_EMULATION
+  {
+    // 0x4E??? : every partial sum is stored; the x87 adds and divides first (the count loaded as an integer)
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    for (k=0; k < qh hull_dim; k++) {
+      coord= center+k;
+      *coord= 0.0;
+      FOREACHvertex_(vertices)
+        *coord= fp.store_double(fp.add(fp.load(vertex->point[k]), fp.load(*coord)));
+      *coord= fp.store_double(fp.divide(fp.load(*coord), fp.load((int32_t)count)));
+    }
+  }
+#else
   for (k=0; k < qh hull_dim; k++) {
     coord= center+k;
     *coord= 0.0;
@@ -644,6 +689,7 @@ pointT *qh_getcenter(setT *vertices) {
       *coord += vertex->point[k];
     *coord /= count;
   }
+#endif
   return(center);
 } /* getcenter */
 
@@ -879,8 +925,18 @@ pointT *qh_projectpoint(pointT *point, facetT *facet, realT dist) {
   qh_memalloc_(normsize, freelistp, newpoint, pointT);
   np= newpoint;
   normal= facet->normal;
+#if IVP_ENABLE_X87_EMULATION
+  {
+    // 0x4F???: point - dist * normal, one rounding per coordinate
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 distance= fp.load(dist);
+    for(k= qh hull_dim; k--; )
+      *(np++)= fp.store_double(fp.subtract(fp.load(*point++), fp.multiply(distance, fp.load(*normal++))));
+  }
+#else
   for(k= qh hull_dim; k--; )
     *(np++)= *point++ - dist * *normal++;
+#endif
   return(newpoint);
 } /* projectpoint */
 
@@ -1093,6 +1149,45 @@ void qh_sethyperplane_det (int dim, coordT **rows, coordT *point0,
     *offset= -(point0[0]*normal[0]+point0[1]*normal[1]);
     *nearzero= False;  /* since nearzero norm => incident points */
   }else if (dim == 3) {
+#if IVP_ENABLE_X87_EMULATION
+    // 0x4F??? (dim 3): edge differences, products and 2x2 determinants on the x87 stack, each normal component
+    // stored; the offset is stored but stays on the stack, and the incidence test uses that unrounded value:
+    // dist = ((p2 n2 + p1 n1) + n0 p0) + offset; outside when above DISTround, below -DISTround or unordered
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const coordT *r0= rows[0], *r1= rows[1], *r2= rows[2];
+#define QH_X87_D(a, k) fp.subtract(fp.load(a[k]), fp.load(r0[k]))
+    normal[0]= fp.store_double(fp.subtract(fp.multiply(QH_X87_D(r2, 1), QH_X87_D(r1, 2)),
+      fp.multiply(QH_X87_D(r2, 2), QH_X87_D(r1, 1))));
+    normal[1]= fp.store_double(fp.subtract(fp.multiply(QH_X87_D(r2, 2), QH_X87_D(r1, 0)),
+      fp.multiply(QH_X87_D(r1, 2), QH_X87_D(r2, 0))));
+    normal[2]= fp.store_double(fp.subtract(fp.multiply(QH_X87_D(r1, 1), QH_X87_D(r2, 0)),
+      fp.multiply(QH_X87_D(r2, 1), QH_X87_D(r1, 0))));
+#undef QH_X87_D
+    qh_normalize2 (normal, dim, toporient, NULL, NULL);
+    const IVP_U_Float80 offset_extended= fp.negate(fp.add(fp.add(
+      fp.multiply(fp.load(point0[2]), fp.load(normal[2])), fp.multiply(fp.load(point0[1]), fp.load(normal[1]))),
+      fp.multiply(fp.load(point0[0]), fp.load(normal[0]))));
+    *offset= fp.store_double(offset_extended);
+    maxround= qh DISTround;
+    const IVP_U_Float80 maxround_extended= fp.load(maxround);
+    for (i=dim; i--; ) {
+      point= rows[i];
+      if (point != point0) {
+        const IVP_U_Float80 distance= fp.add(fp.add(fp.add(
+          fp.multiply(fp.load(point[2]), fp.load(normal[2])), fp.multiply(fp.load(point[1]), fp.load(normal[1]))),
+          fp.multiply(fp.load(normal[0]), fp.load(point[0]))), offset_extended);
+        if (fp.compare(distance, maxround_extended) == IVP_X87_Arithmetic::GREATER) {
+          *nearzero= True;
+          break;
+        }
+        const IVP_X87_Arithmetic::Relation below= fp.compare(distance, fp.negate(maxround_extended));
+        if (below == IVP_X87_Arithmetic::LESS || below == IVP_X87_Arithmetic::UNORDERED) {
+          *nearzero= True;
+          break;
+        }
+      }
+    }
+#else
     normal[0]= det2_(dY(2,0), dZ(2,0),
 		     dY(1,0), dZ(1,0));
     normal[1]= det2_(dX(1,0), dZ(1,0),
@@ -1114,6 +1209,7 @@ void qh_sethyperplane_det (int dim, coordT **rows, coordT *point0,
 	}
       }
     }
+#endif
   }else if (dim == 4) {
     normal[0]= - det3_(dY(2,0), dZ(2,0), dW(2,0),
 			dY(1,0), dZ(1,0), dW(1,0),
@@ -1205,10 +1301,17 @@ void qh_sethyperplane_gauss (int dim, coordT **rows, pointT *point0,
   pointcoord= point0;
   normalcoef= normal;
   // RVA 0x50630 writes each offset subtraction to binary64.
+#if IVP_ENABLE_X87_EMULATION
+  IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+  *offset= fp.store_double(fp.negate(fp.multiply(fp.load(*pointcoord++), fp.load(*normalcoef++))));
+  for(k= dim-1; k--; pointcoord++, normalcoef++)
+    *offset= fp.store_double(fp.subtract(fp.load(*offset), fp.multiply(fp.load(*pointcoord), fp.load(*normalcoef))));
+#else
   volatile realT *offset_spill=offset;
   *offset_spill= -(*pointcoord++ * *normalcoef++);
   for(k= dim-1; k--; )
     *offset_spill -= *pointcoord++ * *normalcoef++;
+#endif
 } /* sethyperplane_gauss */
 
 

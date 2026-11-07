@@ -13,6 +13,9 @@
 */
    
 #include <ivp_physics.hxx>
+#if IVP_ENABLE_X87_EMULATION
+#include <ivu_x87.hxx>
+#endif
 #include "qhull_a.hxx"
    
 /*================== functions in alphabetic order ============*/
@@ -76,6 +79,44 @@ void qh_crossproduct (int dim, realT vecA[3], realT vecB[3], realT vecC[3]){
     if dim >= 4
       nearzero iff diagonal[k] < qh NEARzero[k]
 */
+#if IVP_ENABLE_X87_EMULATION
+/* the 2002 DLL's qh_determinant (0x50850): the 2x2 and 3x3 determinants on the x87 stack, compared with NEARzero
+   unrounded and returned in ST0; above 3, the product of the eliminated diagonal starting from 1.0 */
+static IVP_U_Float80 qh_determinant_x87 (IVP_X87_Arithmetic &fp, realT **rows, int dim, boolT *nearzero) {
+  IVP_U_Float80 det;
+  boolT sign= False;
+  int i;
+
+  *nearzero= False;
+  if (dim == 2 || dim == 3) {
+    const realT *r0= rows[0], *r1= rows[1];
+    if (dim == 2)
+      det= fp.subtract(fp.multiply(fp.load(r1[1]), fp.load(r0[0])), fp.multiply(fp.load(r0[1]), fp.load(r1[0])));
+    else {
+      const realT *r2= rows[2];
+      const IVP_U_Float80 t1= fp.multiply(fp.subtract(fp.multiply(fp.load(r1[1]), fp.load(r2[2])),
+        fp.multiply(fp.load(r1[2]), fp.load(r2[1]))), fp.load(r0[0]));
+      const IVP_U_Float80 t2= fp.multiply(fp.subtract(fp.multiply(fp.load(r0[1]), fp.load(r2[2])),
+        fp.multiply(fp.load(r0[2]), fp.load(r2[1]))), fp.load(r1[0]));
+      const IVP_U_Float80 t3= fp.multiply(fp.subtract(fp.multiply(fp.load(r0[1]), fp.load(r1[2])),
+        fp.multiply(fp.load(r1[1]), fp.load(r0[2]))), fp.load(r2[0]));
+      det= fp.add(fp.subtract(t1, t2), t3);
+    }
+    const IVP_X87_Arithmetic::Relation r= fp.compare(fp.absolute(det), fp.load(qh NEARzero[dim - 1]));
+    if (r == IVP_X87_Arithmetic::LESS || r == IVP_X87_Arithmetic::UNORDERED)
+      *nearzero= True;
+  }else {
+    qh_gausselim(rows, dim, dim, &sign, nearzero);  /* if nearzero, diagonal still ok*/
+    det= fp.load(1.0);
+    for (i= dim; i--; )
+      det= fp.multiply(det, fp.load((rows[i])[i]));
+    if (sign)
+      det= fp.negate(det);
+  }
+  return det;
+}
+#endif
+
 realT qh_determinant (realT **rows, int dim, boolT *nearzero) {
   realT det=0;
   int i;
@@ -85,7 +126,14 @@ realT qh_determinant (realT **rows, int dim, boolT *nearzero) {
   if (dim < 2) {
     ivp_message( "qhull internal error (qh_determinate): only implemented for dimension >= 2\n");
     qh_errexit (qh_ERRqhull, NULL, NULL);
-  }else if (dim == 2) {
+  }
+#if IVP_ENABLE_X87_EMULATION
+  else {
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    det= fp.store_double(qh_determinant_x87(fp, rows, dim, nearzero));
+  }
+#else
+  else if (dim == 2) {
     det= det2_(rows[0][0], rows[0][1],
 		 rows[1][0], rows[1][1]);
     if (fabs_(det) < qh NEARzero[1])  /* not really correct, what should this be? */
@@ -104,6 +152,7 @@ realT qh_determinant (realT **rows, int dim, boolT *nearzero) {
     if (sign)
       det= -det;
   }
+#endif
   return det;
 } /* determinant */
 
@@ -300,6 +349,53 @@ void qh_detroundoff (void) {
     construct qm_matrix by subtracting apex from points
     compute determinate
 */
+#if IVP_ENABLE_X87_EMULATION
+/* the 2002 DLL's qh_detsimplex: the differences stored, the determinant returned in ST0 unrounded (rounded through
+   its local when tracing at 2 or more, as the original's trace path reloads it) */
+static IVP_U_Float80 qh_detsimplex_x87(IVP_X87_Arithmetic &fp, pointT *apex, setT *points, int dim,
+    boolT *nearzero) {
+  pointT *coorda, *coordp, *gmcoord, *point, **pointp;
+  coordT **rows;
+  int k,  i=0;
+
+  zinc_(Zdetsimplex);
+  gmcoord= qh gm_matrix;
+  rows= qh gm_row;
+  FOREACHpoint_(points) {
+    if (i == dim)
+      break;
+    rows[i++]= gmcoord;
+    coordp= point;
+    coorda= apex;
+    for (k= dim; k--; )
+      *(gmcoord++)= fp.store_double(fp.subtract(fp.load(*coordp++), fp.load(*coorda++)));
+  }
+  if (i < dim) {
+    ivp_message( "qhull internal error (qh_detsimplex): #points %d < dimension %d\n",
+               i, dim);
+    qh_errexit (qh_ERRqhull, NULL, NULL);
+  }
+  IVP_U_Float80 det= qh_determinant_x87 (fp, rows, dim, nearzero);
+  if (qh IStracing >= 2) {
+    const realT stored= fp.store_double(det);
+    trace2((qh ferr, "qh_detsimplex: det=%2.2g for point p%d, dim %d, nearzero? %d\n",
+	  stored, qh_pointid(apex), dim, *nearzero));
+    det= fp.load(stored);
+  }
+  return det;
+}
+
+/* qh_maxsimplex's test: |det| unrounded against the stored maxdet; maxdet takes it rounded */
+static boolT qh_maxsimplex_better(pointT *point, setT *simplex, int k, boolT *nearzero, realT *maxdet) {
+  IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+  const IVP_U_Float80 det= fp.absolute(qh_detsimplex_x87(fp, point, simplex, k, nearzero));
+  if (fp.compare(det, fp.load(*maxdet)) != IVP_X87_Arithmetic::GREATER)
+    return False;
+  *maxdet= fp.store_double(det);
+  return True;
+}
+#endif
+
 realT qh_detsimplex(pointT *apex, setT *points, int dim, boolT *nearzero) {
   pointT *coorda, *coordp, *gmcoord, *point, **pointp;
   coordT **rows;
@@ -323,7 +419,14 @@ realT qh_detsimplex(pointT *apex, setT *points, int dim, boolT *nearzero) {
                i, dim);
     qh_errexit (qh_ERRqhull, NULL, NULL);
   }
+#if IVP_ENABLE_X87_EMULATION
+  {
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    det= fp.store_double(qh_determinant_x87 (fp, rows, dim, nearzero));
+  }
+#else
   det= qh_determinant (rows, dim, nearzero);
+#endif
   trace2((qh ferr, "qh_detsimplex: det=%2.2g for point p%d, dim %d, nearzero? %d\n",
 	  det, qh_pointid(apex), dim, *nearzero)); 
   return det;
@@ -1196,9 +1299,13 @@ void qh_maxsimplex (int dim, setT *maxpoints, pointT *points, int numpoints, set
     maxdet= -REALmax;
     FOREACHpoint_(maxpoints) {
       if (!qh_setin (*simplex, point)) {
+#if IVP_ENABLE_X87_EMULATION
+        if (qh_maxsimplex_better(point, *simplex, k, &nearzero, &maxdet)) {
+#else
         det= qh_detsimplex(point, *simplex, k, &nearzero);
         if ((det= fabs_(det)) > maxdet) {
 	  maxdet= det;
+#endif
           maxpoint= point;
 	  maxnearzero= nearzero;
         }
@@ -1216,9 +1323,13 @@ void qh_maxsimplex (int dim, setT *maxpoints, pointT *points, int numpoints, set
 	if (point == qh GOODpointp)
 	  continue;
         if (!qh_setin (*simplex, point)) {
+#if IVP_ENABLE_X87_EMULATION
+          if (qh_maxsimplex_better(point, *simplex, k, &nearzero, &maxdet)) {
+#else
           det= qh_detsimplex(point, *simplex, k, &nearzero);
           if ((det= fabs_(det)) > maxdet) {
 	    maxdet= det;
+#endif
             maxpoint= point;
 	    maxnearzero= nearzero;
 	  }

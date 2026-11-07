@@ -698,13 +698,14 @@ void IVP_Compact_Ledge_Solver::calc_hesse_vec_object_not_normized(const IVP_Comp
     const IVP_U_Float_Point *p1 = IVP_CLS.give_object_coords(edge->get_next(), ledge);
     const IVP_U_Float_Point *p2 = IVP_CLS.give_object_coords(edge->get_prev(), ledge);
 #if IVP_ENABLE_X87_EMULATION
-    // Retail RVA 0x21280: the edge differences and their products are exact;
-    // each component's difference is rounded in ST, then stored as a double.
+    // Retail RVA 0x21280: the edge p2 - p0 is stored as doubles and reloaded, the edge p1 - p0 stays on the x87
+    // stack (a float difference is not exact in a double when the exponents are far apart); each component's
+    // difference of products is rounded in ST, then stored as a double.
     IVP_X87_Arithmetic fp(IVP_X87_Control::current());
     IVP_U_Float80 a[3], b[3];
     for (int i = 0; i < 3; ++i)
     {
-        a[i] = fp.subtract(fp.load(p2->k[i]), fp.load(p0->k[i]));
+        a[i] = fp.load(fp.store_double(fp.subtract(fp.load(p2->k[i]), fp.load(p0->k[i]))));
         b[i] = fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i]));
     }
     for (int i = 0; i < 3; ++i)

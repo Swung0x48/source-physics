@@ -316,9 +316,17 @@ inline void IVP_U_Point::subtract(const IVP_U_Float_Point *v1, const IVP_U_Float
 {
     // special conversion vector subtraction: (doubleP) = (floatP) - (floatP)
     IVP_DOUBLE a, b, c;
+#if IVP_ENABLE_X87_EMULATION
+    // The original's x87 subtracts the loaded floats at extended precision: the difference is exact in the
+    // double unless the exponents are more than 29 apart. A float subtraction would round it to a float.
+    a = IVP_DOUBLE(v1->k[0]) - v2->k[0];
+    b = IVP_DOUBLE(v1->k[1]) - v2->k[1];
+    c = IVP_DOUBLE(v1->k[2]) - v2->k[2];
+#else
     a = v1->k[0] - v2->k[0];
     b = v1->k[1] - v2->k[1];
     c = v1->k[2] - v2->k[2];
+#endif
 
     k[0] = a;
     k[1] = b;

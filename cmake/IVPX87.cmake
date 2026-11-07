@@ -1,7 +1,9 @@
 include("${CMAKE_CURRENT_LIST_DIR}/IVPX87Modes.cmake")
 
+option(IVP_X87_IPO "Link-time optimization of the numerical code (OFF keeps the plain calling conventions for debuggers)" ON)
+
 function(ivp_enable_numerical_ipo target)
-    if(IVP_X87_IPO_SUPPORTED)
+    if(IVP_X87_IPO_SUPPORTED AND IVP_X87_IPO)
         set_target_properties(${target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
     endif()
 endfunction()

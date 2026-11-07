@@ -105,6 +105,27 @@ void IVP_Compact_Ledge_Mass_Center_Solver::integrate_triangle(const IVP_Compact_
     IVP_DOUBLE fydz;
     IVP_BOOL three_edge_area; // flag: integrate triangle or square
 
+#if IVP_ENABLE_X87_EMULATION
+    // 0x3B590: |k[z]| against |k[y]| (unordered counts as below); each slope is (k * 0.5) / k' on the x87, rounded
+    // once by its store; the k[z] test against P_DOUBLE_RES is strictly above
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_X87_Arithmetic::Relation steep = fp.compare(fp.absolute(fp.load(hesse->k[z])), fp.absolute(fp.load(hesse->k[y])));
+    if (steep == IVP_X87_Arithmetic::LESS || steep == IVP_X87_Arithmetic::UNORDERED)
+    {
+        three_edge_area = IVP_FALSE;
+        fydz = fp.store_double(fp.divide(fp.multiply(fp.load(hesse->k[z]), fp.load(0.5)), fp.load(hesse->k[y])));
+        fzdy = 0.0f;
+    }
+    else
+    {
+        three_edge_area = IVP_TRUE;
+        if (fp.compare(fp.absolute(fp.load(hesse->k[z])), fp.load(P_DOUBLE_RES)) == IVP_X87_Arithmetic::GREATER)
+            fzdy = fp.store_double(fp.divide(fp.multiply(fp.load(hesse->k[y]), fp.load(-0.5)), fp.load(hesse->k[z])));
+        else
+            fzdy = 0.0f;
+        fydz = 0.0f;
+    }
+#else
     if (IVP_DOUBLE(IVP_Inline_Math::fabsd(hesse->k[z])) < IVP_DOUBLE(IVP_Inline_Math::fabsd(hesse->k[y])))
     {
         three_edge_area = IVP_FALSE; // intagrate triangle plus square
@@ -124,6 +145,7 @@ void IVP_Compact_Ledge_Mass_Center_Solver::integrate_triangle(const IVP_Compact_
         }
         fydz = 0.0f;
     }
+#endif
     int l;
     IVP_DOUBLE area[3]={0.0,0.0,0.0};
     for (l = 0; l < 3; l++)
@@ -140,10 +162,19 @@ void IVP_Compact_Ledge_Mass_Center_Solver::integrate_triangle(const IVP_Compact_
 
         IVP_U_Point vec;
         vec.subtract(&p1, &p0);
+#if IVP_ENABLE_X87_EMULATION
+        // 0x3B6E5: the length (0x0DD20) stays unrounded in ST0; skipped when RES * length is above |vec.k[x]|
+        if (fp.compare(fp.multiply(vec.real_length_extended(fp), fp.load(P_DOUBLE_RES)),
+                       fp.load(IVP_Inline_Math::fabsd(vec.k[x]))) == IVP_X87_Arithmetic::GREATER)
+        {
+            continue;
+        }
+#else
         if (IVP_Inline_Math::fabsd(vec.k[x]) < P_DOUBLE_RES * vec.real_length())
         {
             continue;
         }
+#endif
 #if IVP_ENABLE_X87_EMULATION
         inertia_edge_integral(p0.k[x],p0.k[y],p0.k[z],p1.k[x],
                               vec.k[x],vec.k[y],vec.k[z],three_edge_area,fzdy,fydz,area);
@@ -185,9 +216,16 @@ void IVP_Compact_Ledge_Mass_Center_Solver::integrate_triangle(const IVP_Compact_
         area[2] += m;
 #endif
     }
+#if IVP_ENABLE_X87_EMULATION
+    // 0x3B8B5: area + sum on the x87, stored
+    msum = fp.store_double(fp.add(fp.load(area[0]), fp.load(msum)));
+    mzsum = fp.store_double(fp.add(fp.load(area[1]), fp.load(mzsum)));
+    mzzsum = fp.store_double(fp.add(fp.load(area[2]), fp.load(mzzsum)));
+#else
     msum += area[0];
     mzsum += area[1];
     mzzsum += area[2];
+#endif
 }
 
 void IVP_Compact_Ledge_Find_Mass_Center::integrate_triangle(const IVP_Compact_Ledge *ledge, const IVP_Compact_Triangle *triangle)
