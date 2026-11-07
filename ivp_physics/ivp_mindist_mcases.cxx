@@ -851,6 +851,29 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_PP(const IVP_Compact_Edge *
     m_cache_A->get_object_cache()->transform_position_to_object_coords(&points_ws[1], &point_other_os[1]);
 
     {
+#if IVP_ENABLE_X87_EMULATION
+        // Retail RVA 0x32350 keeps the differences, the square sum (z, y, then x), the inverse root and the length on
+        // the x87 stack; the plane's y and z components pass through binary64 temporaries, x is stored directly.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_U_Float80 dx = fp.subtract(fp.load(points_ws[0].k[0]), fp.load(points_ws[1].k[0]));
+        const IVP_U_Float80 dy = fp.subtract(fp.load(points_ws[0].k[1]), fp.load(points_ws[1].k[1]));
+        const IVP_U_Float80 dz = fp.subtract(fp.load(points_ws[0].k[2]), fp.load(points_ws[1].k[2]));
+        const IVP_U_Float80 qlen = fp.add(fp.add(fp.multiply(dz, dz), fp.multiply(dy, dy)), fp.multiply(dx, dx));
+        if (fp.compare(qlen, fp.load((double)P_DOUBLE_RES)) == IVP_X87_Arithmetic::GREATER)
+        {
+            const IVP_U_Float80 inv_len = IVP_Fast_Math::isqrt_extended(fp, qlen, 3);
+            mindist->len_numerator = fp.store_float(fp.subtract(fp.multiply(inv_len, qlen), fp.load(mindist->sum_extra_radius)));
+            const double plane_y = fp.store_double(fp.multiply(dy, inv_len));
+            const double plane_z = fp.store_double(fp.multiply(dz, inv_len));
+            mindist->contact_plane.k[0] = fp.store_float(fp.multiply(dx, inv_len));
+            mindist->contact_plane.k[1] = fp.store_float(fp.load(plane_y));
+            mindist->contact_plane.k[2] = fp.store_float(fp.load(plane_z));
+        }
+        else
+        {
+            return IVP_MRC_ENDLESS_LOOP;
+        }
+#else
         IVP_DOUBLE qlen = points_ws[0].quad_distance_to(&points_ws[1]);
         if (qlen > P_DOUBLE_RES)
         {
@@ -862,6 +885,7 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::p_minimize_PP(const IVP_Compact_Edge *
         {
             return IVP_MRC_ENDLESS_LOOP;
         }
+#endif
 
 #ifdef IVP_HALFSPACE_OPTIMIZATION_ENABLED
         mindist->contact_dot_diff_center = calc_contact_center_projection(&m_cache_A->get_object_cache()->core_pos, &m_cache_B->get_object_cache()->core_pos,&mindist->contact_plane);

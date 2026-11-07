@@ -283,6 +283,25 @@ void IVP_Rot_Inertia_Solver::find_center_given_xyz(IVP_U_BigVector<IVP_Compact_L
             solver.integrate_triangle(ledge, tri, x, y, z);
         }
     }
+#if IVP_ENABLE_X87_EMULATION
+    // The original (RVA 0x3BB8D): fcomp against P_DOUBLE_EPS (below or unordered takes the empty branch), then each
+    // quotient divided in the registers and rounded once more by the store to the double.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 msum = fp.load(solver.msum);
+    const IVP_X87_Arithmetic::Relation r = fp.compare(msum, fp.load((double)P_DOUBLE_EPS));
+    if (r == IVP_X87_Arithmetic::LESS || r == IVP_X87_Arithmetic::UNORDERED)
+    {
+        *mass = 0.0f;
+        *center = 0.0f;
+        *inertia = 1.0f;
+    }
+    else
+    {
+        *center = fp.store_double(fp.divide(fp.load(solver.mzsum), msum));
+        *mass = solver.msum;
+        *inertia = fp.store_double(fp.divide(fp.load(solver.mzzsum), msum));
+    }
+#else
     if (solver.msum < P_DOUBLE_EPS)
     {
         *mass = 0.0f;
@@ -295,6 +314,7 @@ void IVP_Rot_Inertia_Solver::find_center_given_xyz(IVP_U_BigVector<IVP_Compact_L
         *mass = solver.msum;
         *inertia = solver.mzzsum / solver.msum;
     }
+#endif
 }
 
 static IVP_RETURN_TYPE localCalcMassCenterAndRotInertia(
@@ -309,12 +329,28 @@ static IVP_RETURN_TYPE localCalcMassCenterAndRotInertia(
     fmc.integrate_ledges(all_ledges);
 
     // do not check the surface if height of object is very smally
+#if IVP_ENABLE_X87_EMULATION
+    // The original (RVA 0x3BC86): the root, its cube and the 1e-9f factor all stay in the registers for the compare
+    // (unordered takes the else branch); the mass center is sum_mass (floats) times 1.0 / sum_det, that quotient
+    // rounded to a double first (it is passed on the stack), each product rounded by its store.
+    IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    const IVP_U_Float80 surface = fp.square_root(fp.load(fmc.qsum_surface));
+    const IVP_U_Float80 limit = fp.multiply(fp.multiply(fp.multiply(surface, surface), surface), fp.load((double)1e-9f));
+    if (fp.compare(fp.load(fmc.sum_det), limit) == IVP_X87_Arithmetic::GREATER)
+    {
+        transform.init();
+        const IVP_U_Float80 factor = fp.load(fp.store_double(fp.divide(fp.load(1.0), fp.load(fmc.sum_det))));
+        for (int i = 0; i < 3; ++i)
+            transform.vv.k[i] = fp.store_double(fp.multiply(fp.load(fmc.sum_mass.k[i]), factor));
+        mass_center_out->set(transform.get_position());
+#else
     IVP_DOUBLE surface = IVP_Inline_Math::sqrtd(fmc.qsum_surface);
     if (fmc.sum_det > surface * surface * surface * 1e-9f)
     {
         transform.init();
         transform.vv = fmc.get_mass_center();
         mass_center_out->set(transform.get_position());
+#endif
 
         IVP_DOUBLE volume;
         IVP_U_Point rot_inertia_2d;
@@ -323,6 +359,17 @@ static IVP_RETURN_TYPE localCalcMassCenterAndRotInertia(
         IVP_Rot_Inertia_Solver::find_center_given_xyz(all_ledges, 1, 2, 0, &transform, &check_center.k[1], &volume, &rot_inertia_2d.k[1]);
         IVP_Rot_Inertia_Solver::find_center_given_xyz(all_ledges, 2, 0, 1, &transform, &check_center.k[2], &volume, &rot_inertia_2d.k[2]);
 
+#if IVP_ENABLE_X87_EMULATION
+        { // the original (RVA 0x3BD96): the squares of k[0] and k[2] stay in the registers, k[1]'s is stored to a double;
+          // each root is taken of the unrounded sum and rounded by its store
+            const IVP_U_Float80 a = fp.multiply(fp.load(rot_inertia_2d.k[0]), fp.load(rot_inertia_2d.k[0]));
+            const IVP_U_Float80 b = fp.load(fp.store_double(fp.multiply(fp.load(rot_inertia_2d.k[1]), fp.load(rot_inertia_2d.k[1]))));
+            const IVP_U_Float80 c = fp.multiply(fp.load(rot_inertia_2d.k[2]), fp.load(rot_inertia_2d.k[2]));
+            rotation_inertia_out->set(fp.store_double(fp.square_root(fp.add(c, b))),
+                                      fp.store_double(fp.square_root(fp.add(c, a))),
+                                      fp.store_double(fp.square_root(fp.add(b, a))));
+        }
+#else
         { // calc 3d rotation inertia based on 2d values
             IVP_DOUBLE a = rot_inertia_2d.k[0];
             IVP_DOUBLE b = rot_inertia_2d.k[1];
@@ -335,6 +382,7 @@ static IVP_RETURN_TYPE localCalcMassCenterAndRotInertia(
             IVP_DOUBLE sc = IVP_Fast_Math::sqrt(a + b);
             rotation_inertia_out->set(sa, sb, sc);
         }
+#endif
         return IVP_OK;
     }
     else
@@ -352,8 +400,22 @@ static IVP_RETURN_TYPE localCalcMassCenterAndRotInertia(
             max_extents.line_max(&ma);
         }
         mass_center_out->set_interpolate(&min_extents, &max_extents, 0.5f);
+#if IVP_ENABLE_X87_EMULATION
+        // The original (RVA 0x3BEB0): min - max per axis, (dz^2 + dy^2) + dx^2, its root times 0.5, squared, times
+        // 0.5 - all in the registers, rounded once by the stores of the three equal values.
+        IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+        const IVP_U_Float80 dx = fp.subtract(fp.load(min_extents.k[0]), fp.load(max_extents.k[0]));
+        const IVP_U_Float80 dy = fp.subtract(fp.load(min_extents.k[1]), fp.load(max_extents.k[1]));
+        const IVP_U_Float80 dz = fp.subtract(fp.load(min_extents.k[2]), fp.load(max_extents.k[2]));
+        const IVP_U_Float80 half = fp.load(0.5);
+        const IVP_U_Float80 r = fp.multiply(fp.square_root(fp.add(fp.add(fp.multiply(dz, dz), fp.multiply(dy, dy)),
+                                                                fp.multiply(dx, dx))), half);
+        IVP_DOUBLE estimate_inertia = fp.store_double(fp.multiply(fp.multiply(r, r), half));
+        (void)radius;
+#else
         radius = 0.5f * IVP_Inline_Math::sqrtd(min_extents.quad_distance_to(&max_extents));
         IVP_DOUBLE estimate_inertia = radius * radius * 0.5f;
+#endif
         rotation_inertia_out->set(estimate_inertia, estimate_inertia, estimate_inertia);
         return IVP_FAULT;
     }

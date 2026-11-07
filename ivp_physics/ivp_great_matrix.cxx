@@ -423,8 +423,18 @@ void IVP_Great_Matrix_Many_Zero::add_multiple_line(int first, int second, IVP_DO
 	IVP_DOUBLE *first_line = &matrix_values[first * this->aligned_row_len + first];
 	IVP_DOUBLE *second_line = &matrix_values[second * this->aligned_row_len + first];
 
+#if IVP_ENABLE_X87_EMULATION
+	// The original (RVA 0x33DE0): factor * source + target in the registers, one rounding by the store, element by
+	// element, then the same for the right-hand side.
+	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+	const IVP_U_Float80 f = fp.load(factor);
+	for (int k = 0; k < columns - first; k++)
+		second_line[k] = fp.store_double(fp.add(fp.multiply(f, fp.load(first_line[k])), fp.load(second_line[k])));
+	desired_vector[second] = fp.store_double(fp.add(fp.multiply(f, fp.load(desired_vector[first])), fp.load(desired_vector[second])));
+#else
 	IVP_VecFPU::fpu_add_multiple_row(second_line, first_line, factor, columns - first, IVP_FALSE);
 	desired_vector[second] += desired_vector[first] * factor;
+#endif
 }
 
 void IVP_Great_Matrix_Many_Zero::debug_fill_zero()
@@ -575,6 +585,23 @@ void IVP_Great_Matrix_Many_Zero::transform_to_lower_null_triangle()
 			goto column_done;
 		}
 
+#if IVP_ENABLE_X87_EMULATION
+		{
+			// The original (RVA 0x33FBD): -1.0 / diagonal and each line's factor are divided / multiplied in the
+			// registers and rounded by their stores (the factor is the call's stack argument).
+			IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+			negativ_inv_diagonal = fp.store_double(fp.divide(fp.load(-1.0), fp.load(diagonal_elem)));
+			const IVP_U_Float80 inv = fp.load((IVP_DOUBLE)negativ_inv_diagonal);
+			for (i = j + 1; i < columns; i++)
+			{
+				IVP_DOUBLE col_down_elem = matrix_values[i * aligned_row_len + j];
+				if (IVP_Inline_Math::fabsd(col_down_elem) > MATRIX_EPS)
+				{
+					add_multiple_line(j, i, fp.store_double(fp.multiply(fp.load(col_down_elem), inv)));
+				}
+			}
+		}
+#else
 		negativ_inv_diagonal = -1.0f / diagonal_elem;
 		// walk through lines
 		for (i = j + 1; i < columns; i++)
@@ -585,6 +612,7 @@ void IVP_Great_Matrix_Many_Zero::transform_to_lower_null_triangle()
 				add_multiple_line(j, i, col_down_elem * negativ_inv_diagonal);
 			}
 		}
+#endif
 	column_done:;
 	}
 
@@ -633,6 +661,48 @@ void IVP_Great_Matrix_Many_Zero::plausible_input_check()
 IVP_RETURN_TYPE IVP_Great_Matrix_Many_Zero::solve_lower_null_matrix()
 {
 	int i;
+#if IVP_ENABLE_X87_EMULATION
+	// The original (RVA 0x34030): the right side stays in a register through the whole row (each product
+	// subtracted unrounded), the singular tests compare register values (|right| against MATRIX_EPS * 1000.0 in the
+	// registers too), and only the quotient is stored.
+	{
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		for (i = columns - 1; i >= 0; i--)
+		{
+			const IVP_DOUBLE *pointer_in_line = &matrix_values[i * aligned_row_len + columns - 1];
+			IVP_U_Float80 right_side = fp.load(desired_vector[i]);
+			for (int j = columns - 1; j > i; j--)
+			{
+				right_side = fp.subtract(right_side, fp.multiply(fp.load(*pointer_in_line), fp.load(desired_vector[j])));
+				pointer_in_line--;
+			}
+			const IVP_U_Float80 left_side = fp.load(*pointer_in_line);
+			const IVP_X87_Arithmetic::Relation small = fp.compare(fp.absolute(left_side), fp.load(MATRIX_EPS));
+			if (small == IVP_X87_Arithmetic::LESS || small == IVP_X87_Arithmetic::UNORDERED)
+			{
+				const IVP_X87_Arithmetic::Relation r = fp.compare(fp.multiply(fp.load(MATRIX_EPS), fp.load(1000.0)),
+																   fp.absolute(right_side));
+				if (r == IVP_X87_Arithmetic::GREATER)
+				{
+					desired_vector[i] = 0.0f;
+				}
+				else
+				{
+					for (int k = columns - 1; k >= 0; k--)
+						result_vector[k] = 0.0f;
+					return IVP_FAULT;
+				}
+			}
+			else
+			{
+				desired_vector[i] = fp.store_double(fp.divide(right_side, left_side));
+			}
+		}
+		for (i = 0; i < columns; i++)
+			result_vector[i] = desired_vector[i];
+		return IVP_OK;
+	}
+#endif
 	for (i = columns - 1; i >= 0; i--)
 	{
 		IVP_DOUBLE *pointer_in_line = &matrix_values[i * aligned_row_len + columns - 1];

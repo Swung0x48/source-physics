@@ -5,6 +5,9 @@
 #if IVP_ENABLE_X87_EMULATION
 #include <ivu_x87.hxx>
 #endif
+#if defined(_MSC_VER) && defined(_M_IX86)
+#include <float.h>
+#endif
 
 #ifdef IVP_ENABLE_QHULL
 #ifdef IVP_QHULL_REENTRANT
@@ -895,6 +898,15 @@ IVP_Compact_Ledge *IVP_SurfaceBuilder_Pointsoup::convert_pointsoup_to_compact_le
     IVP_X87_Control control = IVP_X87_Control::current();
     control.precision = IVP_X87_Arithmetic::PRECISION_64;
     IVP_X87_Control::set(control);
+#if defined(_MSC_VER) && defined(_M_IX86)
+    // The original's fldcw (RVA 0x3AE25) changes the game thread's own control word and never restores it: from
+    // the first hull of the process on, the game's x87 code (VxMath, CK2, the behaviours) runs at 64 bits instead
+    // of Direct3D's 24.  The SSE2 build does not otherwise touch the x87, so it raises the precision here too.
+    {
+        unsigned int ignored = 0;
+        _controlfp_s(&ignored, _PC_64, _MCW_PC);
+    }
+#endif
 #endif
 
     IVP_Compact_Ledge *result = NULL;

@@ -193,6 +193,14 @@ void IVP_Time_Manager::event_loop(IVP_Environment *env, IVP_Time time)
     unsigned short newFPUflag = tmpflag | 0x0300;
     __asm__ __volatile__("fldcw %0" : : "m"(newFPUflag));
 #endif
+#if IVP_ENABLE_X87_EMULATION
+    // The original (RVA 0x2F250) raises the precision to 64 bits for the events and puts the caller's back after;
+    // the model follows, so the events run at 64 bits whatever the game thread had (24 before the first hull).
+    const IVP_X87_Control saved_x87 = IVP_X87_Control::current();
+    IVP_X87_Control events_x87 = saved_x87;
+    events_x87.precision = IVP_X87_Arithmetic::PRECISION_64;
+    IVP_X87_Control::set(events_x87);
+#endif
 
 #ifdef IVP_ENABLE_PERFORMANCE_COUNTER
     env->get_performancecounter()->start_pcount();
@@ -204,6 +212,9 @@ void IVP_Time_Manager::event_loop(IVP_Environment *env, IVP_Time time)
     env->get_performancecounter()->stop_pcount();
 #endif
 
+#if IVP_ENABLE_X87_EMULATION
+    IVP_X87_Control::set(saved_x87);
+#endif
 #if defined(WIN32) && defined(_MSC_VER)
     _controlfp_s(&ignoredControl, oldControl, _MCW_PC);
 #elif defined(WIN32) && (defined(__i386__) || defined(_M_IX86)) && defined(__GNUC__)
