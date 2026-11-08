@@ -168,18 +168,21 @@ void IVP_U_Quat::set_matrix(IVP_U_Matrix3 *mat) const
 #if IVP_ENABLE_X87_EMULATION
     IVP_X87_Arithmetic fp(IVP_X87_Control::current());
     const IVP_U_Float80 one = fp.load(1.0);
-    const IVP_U_Float80 x2 = fp.load(fp.store_double(fp.add(fp.load(x), fp.load(x))));
-    const IVP_U_Float80 y2 = fp.load(fp.store_double(fp.add(fp.load(y), fp.load(y))));
-    const IVP_U_Float80 z2 = fp.add(fp.load(z), fp.load(z));
-    const IVP_U_Float80 xx = fp.load(fp.store_double(fp.multiply(x2, fp.load(x))));
-    const IVP_U_Float80 xy = fp.load(fp.store_double(fp.multiply(y2, fp.load(x))));
-    const IVP_U_Float80 xz = fp.load(fp.store_double(fp.multiply(z2, fp.load(x))));
-    const IVP_U_Float80 yy = fp.load(fp.store_double(fp.multiply(y2, fp.load(y))));
-    const IVP_U_Float80 yz = fp.load(fp.store_double(fp.multiply(z2, fp.load(y))));
-    const IVP_U_Float80 zz = fp.load(fp.store_double(fp.multiply(z2, fp.load(z))));
-    const IVP_U_Float80 wx = fp.load(fp.store_double(fp.multiply(x2, fp.load(w))));
-    const IVP_U_Float80 wy = fp.load(fp.store_double(fp.multiply(y2, fp.load(w))));
-    const IVP_U_Float80 wz = fp.multiply(z2, fp.load(w));
+    // A load is exact, so each component is loaded once (the original reloads
+    // them from memory; the values are the same).
+    const IVP_U_Float80 qx = fp.load(x), qy = fp.load(y), qz = fp.load(z), qw = fp.load(w);
+    const IVP_U_Float80 x2 = fp.round_double(fp.add(qx, qx));
+    const IVP_U_Float80 y2 = fp.round_double(fp.add(qy, qy));
+    const IVP_U_Float80 z2 = fp.add(qz, qz);
+    const IVP_U_Float80 xx = fp.round_double(fp.multiply(x2, qx));
+    const IVP_U_Float80 xy = fp.round_double(fp.multiply(y2, qx));
+    const IVP_U_Float80 xz = fp.round_double(fp.multiply(z2, qx));
+    const IVP_U_Float80 yy = fp.round_double(fp.multiply(y2, qy));
+    const IVP_U_Float80 yz = fp.round_double(fp.multiply(z2, qy));
+    const IVP_U_Float80 zz = fp.round_double(fp.multiply(z2, qz));
+    const IVP_U_Float80 wx = fp.round_double(fp.multiply(x2, qw));
+    const IVP_U_Float80 wy = fp.round_double(fp.multiply(y2, qw));
+    const IVP_U_Float80 wz = fp.multiply(z2, qw);
     mat->set_elem(0, 0, fp.store_double(fp.subtract(one, fp.add(zz, yy))));
     mat->set_elem(0, 1, fp.store_double(fp.subtract(xy, wz)));
     mat->set_elem(0, 2, fp.store_double(fp.add(wy, xz)));

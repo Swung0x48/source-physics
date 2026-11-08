@@ -17,7 +17,7 @@ static IVP_U_Float80 ivp_translation_cross(IVP_X87_Arithmetic &fp, const IVP_U_M
         cross[axis] = fp.subtract(fp.multiply(fp.load(point.k[y]), fp.load(direction->k[z])),
             fp.multiply(fp.load(point.k[z]), fp.load(direction->k[y])));
     }
-    cross[2] = fp.load(fp.store_float(cross[2]));
+    cross[2] = fp.round_float(cross[2]);
     for (int axis = 0; axis < 3; ++axis)
         projected[axis] = fp.add(fp.add(fp.multiply(cross[2], fp.load(matrix->get_elem(2, axis))),
             fp.multiply(cross[1], fp.load(matrix->get_elem(1, axis)))), fp.multiply(cross[0], fp.load(matrix->get_elem(0, axis))));
@@ -62,7 +62,7 @@ void IVP_Solver_Core_Reaction::init_trans_ws(const IVP_U_Point *pos_ws, IVP_Core
         cross_direction_position_cs[0].hesse_val = 1.0f;
         cr_mult_inv[0].set_line_wise_mult4(&cross_direction_position_cs[0], im);
         // RVA 0x3367E: raw_z * im.z is spilled to a double (fstp qword) before both uses
-        const IVP_U_Float80 inertia_z = fp.load(fp.store_double(fp.multiply(raw_z, fp.load(im->k[2]))));
+        const IVP_U_Float80 inertia_z = fp.round_double(fp.multiply(raw_z, fp.load(im->k[2])));
         cr_mult_inv[0].k[2] = fp.store_float(inertia_z);
         const IVP_U_Float80 inertia_y = fp.multiply(fp.multiply(fp.load(cross_direction_position_cs[0].k[1]), fp.load(im->k[1])), fp.load(cross_direction_position_cs[0].k[1]));
         IVP_U_Float80 diagonal = fp.add(inertia_y, fp.load(im->hesse_val));
@@ -314,7 +314,7 @@ static void ivp_reaction_add_multiple(IVP_X87_Arithmetic &fp, IVP_U_Float_Point 
     for (int i = 0; i < 3; ++i)
     {
         const IVP_U_Float80 sum = fp.add(fp.multiply(fp.load(v->k[i]), f), fp.load(target->k[i]));
-        target->k[i] = (float_direct >> i & 1) ? fp.store_float(sum) : fp.store_float(fp.load(fp.store_double(sum)));
+        target->k[i] = (float_direct >> i & 1) ? fp.store_float(sum) : fp.store_float(fp.round_double(sum));
     }
 }
 #endif
@@ -332,7 +332,7 @@ void IVP_Solver_Core_Reaction::exert_impulse_dim2(IVP_Core *core_0, IVP_Core *co
         const IVP_U_Float80 inv_m = fp.load(core_0->get_inv_mass());
         for (int d = 0; d < 2; ++d)
             ivp_reaction_add_multiple(fp, &core_0->speed, direction_ws[d],
-                                      fp.load(fp.store_double(fp.multiply(fp.load(impulse_ds.k[d]), inv_m))), 3);
+                                      fp.round_double(fp.multiply(fp.load(impulse_ds.k[d]), inv_m)), 3);
         for (int d = 0; d < 2; ++d)
             ivp_reaction_add_multiple(fp, &core_0->rot_speed, &cr_mult_inv0[d], fp.load(impulse_ds.k[d]), 1);
     }

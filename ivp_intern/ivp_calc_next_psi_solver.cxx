@@ -133,7 +133,7 @@ inline void IVP_Calc_Next_PSI_Solver::calc_rotation_matrix(IVP_DOUBLE delta_sim_
         for (int axis = 0; axis < 3; ++axis)
         {
             angular[axis] = fp.add(fp.multiply(fp.load(hp.k[axis]), fp.load(dt)), fp.load(pc->rot_speed.k[axis]));
-            if (axis == 2) angular[axis] = fp.load(fp.store_double(angular[axis]));
+            if (axis == 2) angular[axis] = fp.round_double(angular[axis]);
         }
         for (int axis = 0; axis < 3; ++axis)
             pc->rot_speed.k[axis] = fp.store_float(angular[axis]);
@@ -309,10 +309,10 @@ void IVP_Calc_Next_PSI_Solver::calc_psi_rotation_axis(const IVP_U_Quat *q_core_f
             fp.multiply(fp.load(matrix->get_elem(0, 1)), components[1])),
             fp.multiply(fp.load(matrix->get_elem(0, 0)), components[0]));
         for (int axis = 1; axis < 3; ++axis)
-            world[axis] = fp.load(fp.store_double(fp.add(fp.add(
+            world[axis] = fp.round_double(fp.add(fp.add(
                 fp.multiply(fp.load(matrix->get_elem(axis, 0)), components[0]),
                 fp.multiply(fp.load(matrix->get_elem(axis, 2)), components[2])),
-                fp.multiply(fp.load(matrix->get_elem(axis, 1)), components[1]))));
+                fp.multiply(fp.load(matrix->get_elem(axis, 1)), components[1])));
         for (int axis = 0; axis < 3; ++axis)
             core->rotation_axis_world_space.k[axis] = fp.store_float(fp.multiply(world[axis], inverse));
     }

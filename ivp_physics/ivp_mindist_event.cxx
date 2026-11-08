@@ -94,19 +94,19 @@ IVP_DOUBLE IVP_3D_Solver_PF_COLL::get_value(IVP_U_Matrix *A_w_f_c, IVP_U_Matrix 
     for (int axis = 0; axis < 3; ++axis)
     {
         IVP_U_Float80 sum = fp.multiply(fp.load(B_w_f_c->get_elem(axis, 0)), fp.load(point_of_area_object.k[0]));
-        if (axis != 2) sum = fp.load(fp.store_double(sum));
+        if (axis != 2) sum = fp.round_double(sum);
         sum = fp.add(fp.multiply(fp.load(B_w_f_c->get_elem(axis, 1)), fp.load(point_of_area_object.k[1])), sum);
-        if (axis != 2) sum = fp.load(fp.store_double(sum));
+        if (axis != 2) sum = fp.round_double(sum);
         sum = fp.add(fp.multiply(fp.load(B_w_f_c->get_elem(axis, 2)), fp.load(point_of_area_object.k[2])), sum);
         plane[axis] = fp.add(sum, fp.load(B_w_f_c->vv.k[axis]));
-        if (axis != 2) plane[axis] = fp.load(fp.store_double(plane[axis]));
+        if (axis != 2) plane[axis] = fp.round_double(plane[axis]);
         const int first = axis == 2 ? 1 : 0, second = axis == 2 ? 0 : 2, third = axis == 2 ? 2 : 1;
-        normal[axis] = fp.load(fp.store_double(fp.add(fp.add(
+        normal[axis] = fp.round_double(fp.add(fp.add(
             fp.multiply(fp.load(B_w_f_c->get_elem(axis, first)), fp.load(hesse_of_area_object.k[first])),
             fp.multiply(fp.load(B_w_f_c->get_elem(axis, second)), fp.load(hesse_of_area_object.k[second]))),
-            fp.multiply(fp.load(B_w_f_c->get_elem(axis, third)), fp.load(hesse_of_area_object.k[third])))));
+            fp.multiply(fp.load(B_w_f_c->get_elem(axis, third)), fp.load(hesse_of_area_object.k[third]))));
         difference[axis] = fp.subtract(fp.load(point_world.k[axis]), plane[axis]);
-        if (axis != 2) difference[axis] = fp.load(fp.store_double(difference[axis]));
+        if (axis != 2) difference[axis] = fp.round_double(difference[axis]);
     }
     return fp.return_double(fp.add(fp.add(fp.multiply(difference[2], normal[2]),
         fp.multiply(difference[1], normal[1])), fp.multiply(difference[0], normal[0])));
@@ -265,13 +265,13 @@ IVP_DOUBLE IVP_3D_Solver_PK_KK::get_value(IVP_U_Matrix *A_w_f_c, IVP_U_Matrix *B
     IVP_U_Float80 relative[3];
     for (int axis = 0; axis < 3; ++axis)
         relative[axis] = fp.subtract(fp.load(P_world.k[axis]), fp.load(K_world.k[axis]));
-    const IVP_U_Float80 x = fp.load(fp.store_double(relative[0])), y = fp.load(fp.store_double(relative[1]));
-    const IVP_U_Float80 z = fp.load(fp.store_double(relative[2]));
+    const IVP_U_Float80 x = fp.round_double(relative[0]), y = fp.round_double(relative[1]);
+    const IVP_U_Float80 z = fp.round_double(relative[2]);
     const IVP_U_Float80 vx = fp.load(K_vec_world.k[0]), vy = fp.load(K_vec_world.k[1]), vz = fp.load(K_vec_world.k[2]);
     const IVP_U_Float80 cross_x = fp.subtract(fp.multiply(relative[2], vy), fp.multiply(vz, y));
-    const IVP_U_Float80 cross_y = fp.load(fp.store_double(fp.subtract(fp.multiply(vz, x), fp.multiply(z, vx))));
-    const IVP_U_Float80 cross_z = fp.load(fp.store_double(fp.subtract(fp.multiply(y, vx), fp.multiply(vy, x))));
-    const IVP_U_Float80 x_times_z = fp.load(fp.store_double(fp.multiply(vz, cross_x)));
+    const IVP_U_Float80 cross_y = fp.round_double(fp.subtract(fp.multiply(vz, x), fp.multiply(z, vx)));
+    const IVP_U_Float80 cross_z = fp.round_double(fp.subtract(fp.multiply(y, vx), fp.multiply(vy, x)));
+    const IVP_U_Float80 x_times_z = fp.round_double(fp.multiply(vz, cross_x));
     Lot.k[0] = fp.store_double(fp.subtract(fp.multiply(cross_y, vz), fp.multiply(cross_z, vy)));
     Lot.k[1] = fp.store_double(fp.subtract(fp.multiply(cross_z, vx), x_times_z));
     Lot.k[2] = fp.store_double(fp.subtract(fp.multiply(cross_x, vy), fp.multiply(cross_y, vx)));

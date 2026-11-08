@@ -862,7 +862,7 @@ void IVP_Impact_Solver::do_push(IVP_DOUBLE impulse_val)
 	const IVP_U_Float80 impulse = fp.load(impulse_val);
 	world_push.k[0] = fp.store_float(fp.multiply(fp.load(world_push.k[0]), impulse));
 	world_push.k[1] = fp.store_float(fp.multiply(fp.load(world_push.k[1]), impulse));
-	world_push.k[2] = fp.store_float(fp.load(fp.store_double(fp.multiply(fp.load(world_push.k[2]), impulse))));
+	world_push.k[2] = fp.store_float(fp.round_double(fp.multiply(fp.load(world_push.k[2]), impulse)));
 #else
 	world_push.mult(impulse_val); // vector gets longer with impulse_val
 #endif

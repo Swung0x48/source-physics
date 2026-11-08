@@ -92,8 +92,8 @@ void IVP_U_Point::set_interpolate(const IVP_U_Point *p0, const IVP_U_Point *p1, 
         IVP_U_Float80 b = fp.multiply(second, fp.load(p1->k[axis]));
         if (axis == 2)
         {
-            a = fp.load(fp.store_double(a));
-            b = fp.load(fp.store_double(b));
+            a = fp.round_double(a);
+            b = fp.round_double(b);
         }
         values[axis] = axis == 2 ? fp.add(b, a) : fp.add(a, b);
     }
@@ -877,7 +877,7 @@ static void ivp_calc_hesse(Hesse *hesse, const Point *tp0, const Point *tp1, con
     for (int axis = 0; axis < 3; ++axis)
         a[axis] = fp.subtract(fp.load(tp1->k[axis]), origin[axis]);
     for (int axis = 0; axis < 3; ++axis)
-        b[axis] = fp.load(fp.store_double(fp.subtract(fp.load(tp2->k[axis]), origin[axis])));
+        b[axis] = fp.round_double(fp.subtract(fp.load(tp2->k[axis]), origin[axis]));
     const IVP_U_Float80 c0 = fp.subtract(fp.multiply(b[1], a[2]), fp.multiply(b[2], a[1]));
     const IVP_U_Float80 c1 = fp.subtract(fp.multiply(b[2], a[0]), fp.multiply(b[0], a[2]));
     const IVP_U_Float80 c2 = fp.subtract(fp.multiply(b[0], a[1]), fp.multiply(b[1], a[0]));
@@ -1050,7 +1050,7 @@ IVP_RETURN_TYPE IVP_U_Matrix::real_invert(IVP_DOUBLE epsilon)
                 fp.multiply(fp.load(get_elem(b, y)), fp.load(get_elem(a, z))));
             // The third cofactor's X component remains in a register.
             if (row != 2 || col != 0)
-                cofactors[row][col] = fp.load(fp.store_double(cofactors[row][col]));
+                cofactors[row][col] = fp.round_double(cofactors[row][col]);
         }
     }
     const IVP_U_Float80 determinant = fp.add(fp.add(
@@ -1497,17 +1497,39 @@ void IVP_U_Matrix::mimult4(const IVP_U_Matrix *mb, IVP_U_Matrix *m_out) const
 #if IVP_ENABLE_X87_EMULATION
 // Template parameters preserve each transform's accumulation order without
 // selecting an arithmetic operation at runtime.
+// (m[First] * p[First] + m[Second] * p[Second]) + m[Third] * p[Third]
+template <int First, int Second, int Third>
+static IVP_U_Float80 ivp_dot3(IVP_X87_Arithmetic &fp, const IVP_U_Float80 *m, const IVP_U_Float80 *p)
+{
+    const IVP_U_Float80 a = fp.multiply(m[First], p[First]);
+    const IVP_U_Float80 b = fp.multiply(m[Second], p[Second]);
+    const IVP_U_Float80 c = fp.multiply(m[Third], p[Third]);
+    return fp.add(fp.add(a, b), c);
+}
+
+// Row `axis` of the matrix (its column for Inverse) times the point. A load is
+// exact, so loading the three elements first changes nothing.
 template <bool Inverse, int First, int Second, int Third>
 static IVP_U_Float80 ivp_matrix_projection(IVP_X87_Arithmetic &fp,
     const IVP_U_Matrix3 *matrix, const IVP_U_Float80 *point, int axis)
 {
-    const IVP_U_Float80 a = fp.multiply(fp.load(matrix->get_elem(
-        Inverse ? First : axis, Inverse ? axis : First)), point[First]);
-    const IVP_U_Float80 b = fp.multiply(fp.load(matrix->get_elem(
-        Inverse ? Second : axis, Inverse ? axis : Second)), point[Second]);
-    const IVP_U_Float80 c = fp.multiply(fp.load(matrix->get_elem(
-        Inverse ? Third : axis, Inverse ? axis : Third)), point[Third]);
-    return fp.add(fp.add(a, b), c);
+    const IVP_U_Float80 m[3] = {
+        fp.load(Inverse ? matrix->get_elem(0, axis) : matrix->get_elem(axis, 0)),
+        fp.load(Inverse ? matrix->get_elem(1, axis) : matrix->get_elem(axis, 1)),
+        fp.load(Inverse ? matrix->get_elem(2, axis) : matrix->get_elem(axis, 2)) };
+    return ivp_dot3<First, Second, Third>(fp, m, point);
+}
+
+// The same with the matrix already loaded.
+template <bool Inverse, int First, int Second, int Third>
+static IVP_U_Float80 ivp_matrix_projection(IVP_X87_Arithmetic &fp,
+    const IVP_U_Float80 (&matrix)[3][3], const IVP_U_Float80 *point, int axis)
+{
+    const IVP_U_Float80 m[3] = {
+        Inverse ? matrix[0][axis] : matrix[axis][0],
+        Inverse ? matrix[1][axis] : matrix[axis][1],
+        Inverse ? matrix[2][axis] : matrix[axis][2] };
+    return ivp_dot3<First, Second, Third>(fp, m, point);
 }
 
 template <bool Transpose>
@@ -1515,14 +1537,19 @@ static void ivp_matrix_product(const IVP_U_Matrix3 *left,
     const IVP_U_Matrix3 *right, IVP_U_Matrix3 *output)
 {
     IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+    // the right matrix loaded once, not once per row; the output is written at the end, so it may be either input
+    IVP_U_Float80 r[3][3];
+    for (int row = 0; row < 3; ++row)
+        for (int col = 0; col < 3; ++col)
+            r[row][col] = fp.load(right->get_elem(row, col));
     IVP_DOUBLE values[3][3];
     for (int row = 0; row < 3; ++row)
     {
         const IVP_U_Float80 point[3] = { fp.load(left->get_elem(row, 0)),
             fp.load(left->get_elem(row, 1)), fp.load(left->get_elem(row, 2)) };
-        values[row][0] = fp.store_double(ivp_matrix_projection<!Transpose, 1, 0, 2>(fp, right, point, 0));
-        values[row][1] = fp.store_double(ivp_matrix_projection<!Transpose, 2, 1, 0>(fp, right, point, 1));
-        values[row][2] = fp.store_double(ivp_matrix_projection<!Transpose, 2, 1, 0>(fp, right, point, 2));
+        values[row][0] = fp.store_double(ivp_matrix_projection<!Transpose, 1, 0, 2>(fp, r, point, 0));
+        values[row][1] = fp.store_double(ivp_matrix_projection<!Transpose, 2, 1, 0>(fp, r, point, 1));
+        values[row][2] = fp.store_double(ivp_matrix_projection<!Transpose, 2, 1, 0>(fp, r, point, 2));
     }
     for (int row = 0; row < 3; ++row)
         for (int col = 0; col < 3; ++col)
@@ -1540,13 +1567,13 @@ static void ivp_matrix_transform_position(const IVP_U_Matrix *matrix,
     {
         IVP_U_Float80 sum = fp.multiply(fp.load(matrix->get_elem(axis, 0)), point[0]);
         if (axis != 2)
-            sum = fp.load(fp.store_double(sum));
+            sum = fp.round_double(sum);
         for (int col = 1; col < 3; ++col)
         {
             // The product is added to the previously accumulated sum.
             sum = fp.add(fp.multiply(fp.load(matrix->get_elem(axis, col)), point[col]), sum);
             if (axis == 0 || (axis == 1 && col == 1))
-                sum = fp.load(fp.store_double(sum));
+                sum = fp.round_double(sum);
         }
         values[axis] = fp.store_double(fp.add(sum, fp.load(matrix->vv.k[axis])));
     }

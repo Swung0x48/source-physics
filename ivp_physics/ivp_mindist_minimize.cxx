@@ -694,7 +694,7 @@ IVP_MRC_TYPE IVP_Mindist_Minimize_Solver::minimize_BB(IVP_Mindist_Minimize_Solve
         IVP_U_Float_Point &plane = md->contact_plane;
         plane.k[0] = fp.store_float(fp.subtract(fp.load(A->k[0]), fp.load(B->k[0])));
         plane.k[1] = fp.store_float(fp.subtract(fp.load(A->k[1]), fp.load(B->k[1])));
-        plane.k[2] = fp.store_float(fp.load(fp.store_double(fp.subtract(fp.load(A->k[2]), fp.load(B->k[2])))));
+        plane.k[2] = fp.store_float(fp.round_double(fp.subtract(fp.load(A->k[2]), fp.load(B->k[2]))));
         const IVP_U_Float80 x = fp.load(plane.k[0]), y = fp.load(plane.k[1]), z = fp.load(plane.k[2]);
         const IVP_U_Float80 qlen = fp.add(fp.add(fp.multiply(x, x), fp.multiply(y, y)), fp.multiply(z, z));
         IVP_U_Float80 inv_len = fp.load(1.0);

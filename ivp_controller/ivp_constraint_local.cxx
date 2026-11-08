@@ -49,12 +49,12 @@ static void constraint_rotation_error(const IVP_U_Quat *q, IVP_U_Point *error)
 #if IVP_ENABLE_X87_EMULATION
     IVP_X87_Arithmetic fp(IVP_X87_Control::current());
     const IVP_U_Float80 cubic = fp.load(0.24f), quintic = fp.load(0.58f);
-    const IVP_U_Float80 x = fp.load(fp.store_float(fp.load(q->x)));
+    const IVP_U_Float80 x = fp.round_float(fp.load(q->x));
     const IVP_U_Float80 square = fp.multiply(fp.load(q->x), x);
     const IVP_U_Float80 cube = fp.multiply(square, x);
-    const IVP_U_Float80 fifth = fp.multiply(fp.multiply(cube, fp.load(fp.store_float(square))), quintic);
+    const IVP_U_Float80 fifth = fp.multiply(fp.multiply(cube, fp.round_float(square)), quintic);
     error->k[0] = fp.store_double(fp.add(fp.add(fifth,
-        fp.multiply(fp.load(fp.store_float(cube)), cubic)), fp.add(x, x)));
+        fp.multiply(fp.round_float(cube), cubic)), fp.add(x, x)));
     const IVP_DOUBLE components[2] = { q->y, q->z };
     for (int i = 0; i < 2; ++i)
     {

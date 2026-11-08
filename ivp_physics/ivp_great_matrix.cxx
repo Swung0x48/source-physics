@@ -63,7 +63,11 @@ inline void IVP_VecFPU::fpu_add_multiple_row(IVP_DOUBLE *target_adress, IVP_DOUB
 	}
 	else
 	{
-
+#if IVP_VECFPU_SIZE == 1 && IVP_ENABLE_X87_EMULATION
+		// one model object and one load of factor for the row (nothing in the loop changes the precision)
+		IVP_X87_Arithmetic fp(IVP_X87_Control::current());
+		const IVP_U_Float80 loaded_factor = fp.load(factor);
+#endif
 		for (int i = size; i > 0; i -= IVP_VECFPU_SIZE)
 		{
 #if IVP_VECFPU_SIZE == 2
@@ -90,8 +94,7 @@ inline void IVP_VecFPU::fpu_add_multiple_row(IVP_DOUBLE *target_adress, IVP_DOUB
 #if IVP_ENABLE_X87_EMULATION
 			// retail (block size 1, inlined e.g. in 0x359D0 / 0x36030): factor * source + target in ST, one
 			// rounding by the store
-			IVP_X87_Arithmetic fp(IVP_X87_Control::current());
-			target_adress[0] = fp.store_double(fp.add(fp.multiply(fp.load(factor), fp.load(source_adress[0])), fp.load(target_adress[0])));
+			target_adress[0] = fp.store_double(fp.add(fp.multiply(loaded_factor, fp.load(source_adress[0])), fp.load(target_adress[0])));
 #else
 			IVP_DOUBLE a = source_adress[0] * factor;
 			a += target_adress[0];

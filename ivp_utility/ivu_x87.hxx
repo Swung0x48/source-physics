@@ -196,6 +196,8 @@ public:
     double store_double(const IVP_U_Float80 &value) { return ivp_x87_native_store_double(value); }
     float return_float(const IVP_U_Float80 &value) { return store_float(value); }
     double return_double(const IVP_U_Float80 &value) { return store_double(value); }
+    IVP_U_Float80 round_double(const IVP_U_Float80 &value) { return load(store_double(value)); }
+    IVP_U_Float80 round_float(const IVP_U_Float80 &value) { return load(store_float(value)); }
 
     IVP_U_Float80 add(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
     {
@@ -247,6 +249,32 @@ public:
     IVP_U_Float80 exponential(const IVP_U_Float80 &value);
 };
 #else
+// SOFT: how an operation reaches the caller (measured 2026-11-08 on the L12 / L8
+// server journals). With MSVC each operation is one out-of-line function with
+// its fast path inside, a single call per operation (x64 physics -21 to -26 %,
+// x86 -10 to -13 %); inlined into every caller it is slower there. With GCC
+// (arm64) the operations inlined into the callers are faster (-10 % against
+// -6 %). IVP_X87_INLINE_OPERATIONS overrides the choice. HARD keeps the
+// operations inline (the host path is one instruction) and its fallback to the
+// fast path in one out-of-line function per operation.
+#ifndef IVP_X87_INLINE_OPERATIONS
+#if defined(_MSC_VER) && !defined(__clang__)
+#define IVP_X87_INLINE_OPERATIONS 0
+#else
+#define IVP_X87_INLINE_OPERATIONS 1
+#endif
+#endif
+#if IVP_X87_ARITHMETIC == IVP_X87_SOFT && !IVP_X87_INLINE_OPERATIONS
+#define IVP_X87_OPERATION IVP_X87_NOINLINE
+#else
+#define IVP_X87_OPERATION
+#endif
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+#define IVP_X87_SOFT_PATH IVP_X87_NOINLINE
+#else
+#define IVP_X87_SOFT_PATH IVP_X87_FORCEINLINE
+#endif
+
 // Each numerical kernel has explicit precision, rounding and exception status.
 // Its storage is fixed; constructing or operating on it never allocates.
 class IVP_X87_Arithmetic
@@ -272,14 +300,14 @@ class IVP_X87_Arithmetic
     const void *get_status() const { return status_storage.bytes; }
     void update_fast_path();
 
-    IVP_U_Float80 load_general(float value);
-    IVP_U_Float80 load_general(double value);
-    float store_float_general(const IVP_U_Float80 &value);
-    double store_double_general(const IVP_U_Float80 &value);
-    IVP_U_Float80 add_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second);
-    IVP_U_Float80 subtract_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second);
-    IVP_U_Float80 multiply_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second);
-    IVP_U_Float80 divide_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second);
+    IVP_X87_NOINLINE IVP_U_Float80 load_general(float value);
+    IVP_X87_NOINLINE IVP_U_Float80 load_general(double value);
+    IVP_X87_NOINLINE float store_float_general(const IVP_U_Float80 &value);
+    IVP_X87_NOINLINE double store_double_general(const IVP_U_Float80 &value);
+    IVP_X87_NOINLINE IVP_U_Float80 add_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second);
+    IVP_X87_NOINLINE IVP_U_Float80 subtract_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second);
+    IVP_X87_NOINLINE IVP_U_Float80 multiply_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second);
+    IVP_X87_NOINLINE IVP_U_Float80 divide_general(const IVP_U_Float80 &first, const IVP_U_Float80 &second);
 
 public:
     enum Precision { PRECISION_24 = 24, PRECISION_53 = 53, PRECISION_64 = 64 };
@@ -303,83 +331,155 @@ public:
     unsigned get_exception_flags() const;
     void clear_exception_flags();
 
-    IVP_U_Float80 load(float value)
+private:
+    // The fast path, else the general one (SOFT: the operation's whole body).
+    IVP_X87_SOFT_PATH IVP_U_Float80 load_float_soft(float value)
+    {
+        IVP_U_Float80 result;
+        if(!(fast_path && ivp_x87_fast_load_float(value, &result))) result = load_general(value);
+        return result;
+    }
+    IVP_X87_SOFT_PATH IVP_U_Float80 load_double_soft(double value)
+    {
+        IVP_U_Float80 result;
+        if(!(fast_path && ivp_x87_fast_load_double(value, &result))) result = load_general(value);
+        return result;
+    }
+    IVP_X87_SOFT_PATH float store_float_soft(const IVP_U_Float80 &value)
+    {
+        float result;
+        if(!(fast_path && ivp_x87_fast_store_float(value, &result, &fast_inexact)))
+            result = store_float_general(value);
+        return result;
+    }
+    IVP_X87_SOFT_PATH double store_double_soft(const IVP_U_Float80 &value)
+    {
+        double result;
+        if(!(fast_path && ivp_x87_fast_store_double(value, &result, &fast_inexact)))
+            result = store_double_general(value);
+        return result;
+    }
+    IVP_X87_SOFT_PATH IVP_U_Float80 round_double_soft(const IVP_U_Float80 &value)
+    {
+        IVP_U_Float80 result;
+        if(!(fast_path && ivp_x87_fast_round<53, 1023, 0x7ff>(value, &result, &fast_inexact)))
+            result = load(store_double(value));
+        return result;
+    }
+    IVP_X87_SOFT_PATH IVP_U_Float80 round_float_soft(const IVP_U_Float80 &value)
+    {
+        IVP_U_Float80 result;
+        if(!(fast_path && ivp_x87_fast_round<24, 127, 0xff>(value, &result, &fast_inexact)))
+            result = load(store_float(value));
+        return result;
+    }
+    IVP_X87_SOFT_PATH IVP_U_Float80 add_soft(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+    {
+        IVP_U_Float80 result;
+        if(!(fast_path && ivp_x87_fast_add(first, second, 0, &result, &fast_inexact)))
+            result = add_general(first, second);
+        return result;
+    }
+    IVP_X87_SOFT_PATH IVP_U_Float80 subtract_soft(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+    {
+        IVP_U_Float80 result;
+        if(!(fast_path && ivp_x87_fast_add(first, second, 1, &result, &fast_inexact)))
+            result = subtract_general(first, second);
+        return result;
+    }
+    IVP_X87_SOFT_PATH IVP_U_Float80 multiply_soft(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+    {
+        IVP_U_Float80 result;
+        if(!(fast_path && ivp_x87_fast_multiply(first, second, &result, &fast_inexact)))
+            result = multiply_general(first, second);
+        return result;
+    }
+    IVP_X87_SOFT_PATH IVP_U_Float80 divide_soft(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+    {
+        IVP_U_Float80 result;
+        if(!(fast_path && ivp_x87_fast_divide(first, second, &result, &fast_inexact)))
+            result = divide_general(first, second);
+        return result;
+    }
+
+public:
+    IVP_X87_OPERATION IVP_U_Float80 load(float value)
     {
 #if IVP_X87_ARITHMETIC == IVP_X87_HARD
         if(native_path) return ivp_x87_native_load_float(value);
 #endif
-        IVP_U_Float80 result;
-        if(fast_path && ivp_x87_fast_load_float(value, &result)) return result;
-        return load_general(value);
+        return load_float_soft(value);
     }
-    IVP_U_Float80 load(double value)
+    IVP_X87_OPERATION IVP_U_Float80 load(double value)
     {
 #if IVP_X87_ARITHMETIC == IVP_X87_HARD
         if(native_path) return ivp_x87_native_load_double(value);
 #endif
-        IVP_U_Float80 result;
-        if(fast_path && ivp_x87_fast_load_double(value, &result)) return result;
-        return load_general(value);
+        return load_double_soft(value);
     }
     IVP_U_Float80 load(int32_t value);
-    float store_float(const IVP_U_Float80 &value)
+    IVP_X87_OPERATION float store_float(const IVP_U_Float80 &value)
     {
 #if IVP_X87_ARITHMETIC == IVP_X87_HARD
         if(native_path) return ivp_x87_native_store_float(value);
 #endif
-        float result;
-        if(fast_path && ivp_x87_fast_store_float(value, &result, &fast_inexact)) return result;
-        return store_float_general(value);
+        return store_float_soft(value);
     }
-    double store_double(const IVP_U_Float80 &value)
+    IVP_X87_OPERATION double store_double(const IVP_U_Float80 &value)
     {
 #if IVP_X87_ARITHMETIC == IVP_X87_HARD
         if(native_path) return ivp_x87_native_store_double(value);
 #endif
-        double result;
-        if(fast_path && ivp_x87_fast_store_double(value, &result, &fast_inexact)) return result;
-        return store_double_general(value);
+        return store_double_soft(value);
+    }
+    // load(store_double(value)) and load(store_float(value)): the original's
+    // spill of an extended value to a double or float and back, in one call.
+    IVP_X87_OPERATION IVP_U_Float80 round_double(const IVP_U_Float80 &value)
+    {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+        if(native_path) return ivp_x87_native_load_double(ivp_x87_native_store_double(value));
+#endif
+        return round_double_soft(value);
+    }
+    IVP_X87_OPERATION IVP_U_Float80 round_float(const IVP_U_Float80 &value)
+    {
+#if IVP_X87_ARITHMETIC == IVP_X87_HARD
+        if(native_path) return ivp_x87_native_load_float(ivp_x87_native_store_float(value));
+#endif
+        return round_float_soft(value);
     }
     // Scalar API returns use the host ABI. On a native x87 ABI this retains
     // the extended result; internal portable call chains use IVP_U_Float80.
     float return_float(const IVP_U_Float80 &value);
     double return_double(const IVP_U_Float80 &value);
 
-    IVP_U_Float80 add(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+    IVP_X87_OPERATION IVP_U_Float80 add(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
     {
 #if IVP_X87_ARITHMETIC == IVP_X87_HARD
         if(native_path) return ivp_x87_native_add(first, second);
 #endif
-        IVP_U_Float80 result;
-        if(fast_path && ivp_x87_fast_add(first, second, 0, &result, &fast_inexact)) return result;
-        return add_general(first, second);
+        return add_soft(first, second);
     }
-    IVP_U_Float80 subtract(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+    IVP_X87_OPERATION IVP_U_Float80 subtract(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
     {
 #if IVP_X87_ARITHMETIC == IVP_X87_HARD
         if(native_path) return ivp_x87_native_subtract(first, second);
 #endif
-        IVP_U_Float80 result;
-        if(fast_path && ivp_x87_fast_add(first, second, 1, &result, &fast_inexact)) return result;
-        return subtract_general(first, second);
+        return subtract_soft(first, second);
     }
-    IVP_U_Float80 multiply(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+    IVP_X87_OPERATION IVP_U_Float80 multiply(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
     {
 #if IVP_X87_ARITHMETIC == IVP_X87_HARD
         if(native_path) return ivp_x87_native_multiply(first, second);
 #endif
-        IVP_U_Float80 result;
-        if(fast_path && ivp_x87_fast_multiply(first, second, &result, &fast_inexact)) return result;
-        return multiply_general(first, second);
+        return multiply_soft(first, second);
     }
-    IVP_U_Float80 divide(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
+    IVP_X87_OPERATION IVP_U_Float80 divide(const IVP_U_Float80 &first, const IVP_U_Float80 &second)
     {
 #if IVP_X87_ARITHMETIC == IVP_X87_HARD
         if(native_path) return ivp_x87_native_divide(first, second);
 #endif
-        IVP_U_Float80 result;
-        if(fast_path && ivp_x87_fast_divide(first, second, &result, &fast_inexact)) return result;
-        return divide_general(first, second);
+        return divide_soft(first, second);
     }
     IVP_U_Float80 square_root(const IVP_U_Float80 &value);
     IVP_U_Float80 absolute(const IVP_U_Float80 &value);

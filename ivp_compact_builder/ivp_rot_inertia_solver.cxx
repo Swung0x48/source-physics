@@ -52,9 +52,9 @@ static void inertia_edge_integral(IVP_FLOAT p0_x, IVP_FLOAT p0_y, IVP_FLOAT p0_z
 {
     IVP_X87_Arithmetic fp(IVP_X87_Control::current());
     const IVP_U_Float80 x0 = fp.load(p0_x), x1 = fp.load(p1_x);
-    const IVP_U_Float80 slope_y = fp.load(fp.store_double(fp.divide(fp.load(vector_y), fp.load(vector_x))));
+    const IVP_U_Float80 slope_y = fp.round_double(fp.divide(fp.load(vector_y), fp.load(vector_x)));
     const IVP_U_Float80 offset_y = fp.subtract(fp.load(p0_y), fp.multiply(x0, slope_y));
-    const IVP_U_Float80 stored_y = fp.load(fp.store_double(offset_y));
+    const IVP_U_Float80 stored_y = fp.round_double(offset_y);
     IVP_U_Float80 a, b, c;
     if (triangle_area)
     {
@@ -65,23 +65,23 @@ static void inertia_edge_integral(IVP_FLOAT p0_x, IVP_FLOAT p0_y, IVP_FLOAT p0_z
     }
     else
     {
-        const IVP_U_Float80 slope_z = fp.load(fp.store_double(fp.divide(fp.load(vector_z), fp.load(vector_x))));
+        const IVP_U_Float80 slope_z = fp.round_double(fp.divide(fp.load(vector_z), fp.load(vector_x)));
         const IVP_U_Float80 offset_z = fp.subtract(fp.load(p0_z), fp.multiply(x0, slope_z));
-        const IVP_U_Float80 stored_z = fp.load(fp.store_double(offset_z));
+        const IVP_U_Float80 stored_z = fp.round_double(offset_z);
         a = fp.multiply(fp.add(offset_y, fp.multiply(offset_z, fp.load(fydz))), offset_z);
         b = fp.multiply(fp.multiply(stored_z, slope_z), fp.load(fydz));
         b = fp.add(fp.add(fp.add(b, b), fp.multiply(slope_z, stored_y)), fp.multiply(stored_z, slope_y));
         c = fp.multiply(fp.add(fp.multiply(slope_z, fp.load(fydz)), slope_y), slope_z);
     }
     const IVP_U_Float80 square1 = fp.multiply(x1, x1);
-    const IVP_U_Float80 square0 = fp.load(fp.store_double(fp.multiply(x0, x0)));
-    const IVP_U_Float80 integral2 = fp.load(fp.store_double(fp.multiply(fp.subtract(square1, square0), fp.load(0.5))));
-    const IVP_U_Float80 cube1 = fp.load(fp.store_double(fp.multiply(square1, x1)));
-    const IVP_U_Float80 cube0 = fp.load(fp.store_double(fp.multiply(square0, x0)));
+    const IVP_U_Float80 square0 = fp.round_double(fp.multiply(x0, x0));
+    const IVP_U_Float80 integral2 = fp.round_double(fp.multiply(fp.subtract(square1, square0), fp.load(0.5)));
+    const IVP_U_Float80 cube1 = fp.round_double(fp.multiply(square1, x1));
+    const IVP_U_Float80 cube0 = fp.round_double(fp.multiply(square0, x0));
     const IVP_U_Float80 integral3 = fp.multiply(fp.subtract(cube1, cube0), fp.load(1.0 / 3.0));
-    const IVP_U_Float80 fourth1 = fp.load(fp.store_double(fp.multiply(cube1, x1)));
-    const IVP_U_Float80 fourth0 = fp.load(fp.store_double(fp.multiply(cube0, x0)));
-    const IVP_U_Float80 integral4 = fp.load(fp.store_double(fp.multiply(fp.subtract(fourth1, fourth0), fp.load(0.25))));
+    const IVP_U_Float80 fourth1 = fp.round_double(fp.multiply(cube1, x1));
+    const IVP_U_Float80 fourth0 = fp.round_double(fp.multiply(cube0, x0));
+    const IVP_U_Float80 integral4 = fp.round_double(fp.multiply(fp.subtract(fourth1, fourth0), fp.load(0.25)));
     const IVP_U_Float80 integral5 = fp.multiply(fp.subtract(fp.multiply(fourth1, x1), fp.multiply(fourth0, x0)), fp.load(0.2f));
     area[0] = fp.store_double(fp.add(fp.add(fp.add(fp.multiply(fp.subtract(x1, x0), a),
         fp.multiply(integral3, c)), fp.multiply(integral2, b)), fp.load(area[0])));
@@ -240,11 +240,11 @@ void IVP_Compact_Ledge_Find_Mass_Center::integrate_triangle(const IVP_Compact_Le
     IVP_U_Float80 a[3], b[3];
     for (int i = 0; i < 3; ++i)
     {
-        a[i] = fp.load(fp.store_double(fp.subtract(fp.load(p2->k[i]), fp.load(p0->k[i]))));
-        b[i] = fp.load(fp.store_double(fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i]))));
+        a[i] = fp.round_double(fp.subtract(fp.load(p2->k[i]), fp.load(p0->k[i])));
+        b[i] = fp.round_double(fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i])));
     }
-    const IVP_U_Float80 cross_x = fp.load(fp.store_float(fp.subtract(fp.multiply(b[1], a[2]), fp.multiply(b[2], a[1]))));
-    const IVP_U_Float80 cross_y = fp.load(fp.store_float(fp.subtract(fp.multiply(b[2], a[0]), fp.multiply(b[0], a[2]))));
+    const IVP_U_Float80 cross_x = fp.round_float(fp.subtract(fp.multiply(b[1], a[2]), fp.multiply(b[2], a[1])));
+    const IVP_U_Float80 cross_y = fp.round_float(fp.subtract(fp.multiply(b[2], a[0]), fp.multiply(b[0], a[2])));
     const IVP_U_Float80 cross_z = fp.subtract(fp.multiply(b[0], a[1]), fp.multiply(b[1], a[0]));
     const IVP_U_Float80 determinant = fp.add(fp.add(fp.multiply(cross_x, fp.load(p0->k[0])),
         fp.multiply(cross_z, fp.load(p0->k[2]))), fp.multiply(cross_y, fp.load(p0->k[1])));
@@ -262,7 +262,7 @@ void IVP_Compact_Ledge_Find_Mass_Center::integrate_triangle(const IVP_Compact_Le
         {
             const IVP_U_Float80 previous = axis == 1 && vertex == 1 ? fp.load(previous_y) : fp.load(sum_mass.k[axis]);
             values[axis] = fp.add(fp.multiply(fp.load(vertices[vertex]->k[axis]), mass_factor), previous);
-            if (axis != 0) values[axis] = fp.load(fp.store_double(values[axis]));
+            if (axis != 0) values[axis] = fp.round_double(values[axis]);
         }
         previous_y = fp.store_double(values[1]);
         for (int axis = 0; axis < 3; ++axis)
@@ -377,7 +377,7 @@ static IVP_RETURN_TYPE localCalcMassCenterAndRotInertia(
     if (fp.compare(fp.load(fmc.sum_det), limit) == IVP_X87_Arithmetic::GREATER)
     {
         transform.init();
-        const IVP_U_Float80 factor = fp.load(fp.store_double(fp.divide(fp.load(1.0), fp.load(fmc.sum_det))));
+        const IVP_U_Float80 factor = fp.round_double(fp.divide(fp.load(1.0), fp.load(fmc.sum_det)));
         for (int i = 0; i < 3; ++i)
             transform.vv.k[i] = fp.store_double(fp.multiply(fp.load(fmc.sum_mass.k[i]), factor));
         mass_center_out->set(transform.get_position());
@@ -401,7 +401,7 @@ static IVP_RETURN_TYPE localCalcMassCenterAndRotInertia(
         { // the original (RVA 0x3BD96): the squares of k[0] and k[2] stay in the registers, k[1]'s is stored to a double;
           // each root is taken of the unrounded sum and rounded by its store
             const IVP_U_Float80 a = fp.multiply(fp.load(rot_inertia_2d.k[0]), fp.load(rot_inertia_2d.k[0]));
-            const IVP_U_Float80 b = fp.load(fp.store_double(fp.multiply(fp.load(rot_inertia_2d.k[1]), fp.load(rot_inertia_2d.k[1]))));
+            const IVP_U_Float80 b = fp.round_double(fp.multiply(fp.load(rot_inertia_2d.k[1]), fp.load(rot_inertia_2d.k[1])));
             const IVP_U_Float80 c = fp.multiply(fp.load(rot_inertia_2d.k[2]), fp.load(rot_inertia_2d.k[2]));
             rotation_inertia_out->set(fp.store_double(fp.square_root(fp.add(c, b))),
                                       fp.store_double(fp.square_root(fp.add(c, a))),

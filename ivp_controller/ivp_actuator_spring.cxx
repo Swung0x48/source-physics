@@ -226,9 +226,9 @@ static void spring_force_vector(const IVP_U_Float_Point *direction,
     for (int i = 0; i < 3; ++i)
     {
         components[i] = fp.multiply(fp.load(direction->k[i]), axial);
-        if (i != 2) components[i] = fp.load(fp.store_float(components[i]));
+        if (i != 2) components[i] = fp.round_float(components[i]);
         components[i] = fp.add(fp.multiply(fp.load(relative->k[i]), lateral), components[i]);
-        if (i != 0) components[i] = fp.load(fp.store_double(components[i]));
+        if (i != 0) components[i] = fp.round_double(components[i]);
     }
     for (int i = 0; i < 3; ++i)
         output->k[i] = fp.store_float(components[i]);

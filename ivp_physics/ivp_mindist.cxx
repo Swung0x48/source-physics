@@ -1377,17 +1377,17 @@ void IVP_Mindist::mindist_hull_limit_exceeded_event(IVP_HTIME hull_intrusion_val
         const IVP_U_Float80 now = fp.load(current_time.get_seconds());
         IVP_U_Float80 c0[3], c1[3];
         {
-            const IVP_U_Float80 dt0 = fp.load(fp.store_double(fp.subtract(now, fp.load(core0->time_of_last_psi.get_seconds()))));
-            const IVP_U_Float80 dt1 = fp.load(fp.store_double(fp.subtract(now, fp.load(core1->time_of_last_psi.get_seconds()))));
+            const IVP_U_Float80 dt0 = fp.round_double(fp.subtract(now, fp.load(core0->time_of_last_psi.get_seconds())));
+            const IVP_U_Float80 dt1 = fp.round_double(fp.subtract(now, fp.load(core1->time_of_last_psi.get_seconds())));
             for (int i = 0; i < 3; ++i)
             {
-                c0[i] = fp.load(fp.store_double(fp.add(fp.multiply(fp.load(core0->delta_world_f_core_psis.k[i]), dt0), fp.load(core0->pos_world_f_core_last_psi.k[i]))));
-                c1[i] = fp.load(fp.store_double(fp.add(fp.multiply(fp.load(core1->delta_world_f_core_psis.k[i]), dt1), fp.load(core1->pos_world_f_core_last_psi.k[i]))));
+                c0[i] = fp.round_double(fp.add(fp.multiply(fp.load(core0->delta_world_f_core_psis.k[i]), dt0), fp.load(core0->pos_world_f_core_last_psi.k[i])));
+                c1[i] = fp.round_double(fp.add(fp.multiply(fp.load(core1->delta_world_f_core_psis.k[i]), dt1), fp.load(core1->pos_world_f_core_last_psi.k[i])));
             }
         }
         IVP_U_Float80 d[3];
         for (int i = 0; i < 3; ++i)
-            d[i] = fp.load(fp.store_double(fp.subtract(c0[i], c1[i])));
+            d[i] = fp.round_double(fp.subtract(c0[i], c1[i]));
         const IVP_U_Float80 eps = fp.load(P_DOUBLE_EPS);
         const IVP_U_Float80 speed0 = fp.add(fp.add(fp.load(core0->max_surface_rot_speed), fp.load(core0->current_speed)), eps);
         const IVP_U_Float80 speed1 = fp.add(fp.add(fp.load(core1->max_surface_rot_speed), fp.load(core1->current_speed)), eps);
@@ -1404,9 +1404,9 @@ void IVP_Mindist::mindist_hull_limit_exceeded_event(IVP_HTIME hull_intrusion_val
             this->sum_angular_hull_time = fp.store_double(sum_angular);
             this->contact_dot_diff_center = fp.store_float(new_dot);
             this->len_numerator = fp.store_float(fp.subtract(fp.load(estimated_distance), fp.load(hull_intrusion_value)));
-            const IVP_U_Float80 dist_factor = fp.load(fp.store_double(fp.divide(fp.load(estimated_distance), speed)));
-            m0->update_synapse_x87(fp, syn0, current_time, fp.multiply(dist_factor, fp.load(fp.store_double(speed0))));
-            m1->update_synapse_x87(fp, syn1, current_time, fp.multiply(dist_factor, fp.load(fp.store_double(speed1))));
+            const IVP_U_Float80 dist_factor = fp.round_double(fp.divide(fp.load(estimated_distance), speed));
+            m0->update_synapse_x87(fp, syn0, current_time, fp.multiply(dist_factor, fp.round_double(speed0)));
+            m1->update_synapse_x87(fp, syn1, current_time, fp.multiply(dist_factor, fp.round_double(speed1)));
             return;
         }
     }

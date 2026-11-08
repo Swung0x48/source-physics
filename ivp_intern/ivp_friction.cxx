@@ -260,7 +260,7 @@ void IVP_Contact_Point::static_friction_single(const IVP_Event_Sim *es, IVP_FLOA
 			                 c0->speed.dot_product_extended(fp, &info->surf_normal));
 		IVP_Core *c1 = info->contact_core[1];
 		if (c1)
-			closing = fp.subtract(fp.load(fp.store_double(closing)),
+			closing = fp.subtract(fp.round_double(closing),
 			                      fp.add(c1->rot_speed.dot_product_extended(fp, &info->contact_cross_nomal_cs[1]),
 			                             c1->speed.dot_product_extended(fp, &info->surf_normal)));
 		const IVP_U_Float80 gap_diff = fp.subtract(fp.load(desired_gap), fp.load(this->get_gap_length()));
@@ -581,7 +581,7 @@ void IVP_Contact_Point::calc_pretension(IVP_FLOAT len)
 	IVP_X87_Arithmetic fp(IVP_X87_Control::current());
 	IVP_U_Float80 limit = fp.add(fp.multiply(fp.load(len), fp.load(len)), fp.load(P_FLOAT_RES));
 	if (limit_as_float)
-		limit = fp.load(fp.store_float(limit));
+		limit = fp.round_float(limit);
 	const IVP_U_Float80 s0 = fp.load(span_friction_s[0]), s1 = fp.load(span_friction_s[1]);
 	const IVP_U_Float80 qlen = fp.add(fp.multiply(s0, s0), fp.multiply(s1, s1));
 	const IVP_DOUBLE qlen_of_spring = fp.store_double(qlen);
@@ -813,13 +813,13 @@ void IVP_Friction_Solver::ease_two_mindists(IVP_Contact_Point *dist0, IVP_Contac
     for (int axis = 0; axis < 3; ++axis)
     {
         part0[axis] = fp.multiply(fp.load(world_connection.k[axis]), projection0);
-        if (axis != 2) part0[axis] = fp.load(fp.store_float(part0[axis]));
-        part1[axis] = fp.load(fp.store_float(fp.multiply(fp.load(world_connection.k[axis]), projection1)));
+        if (axis != 2) part0[axis] = fp.round_float(part0[axis]);
+        part1[axis] = fp.round_float(fp.multiply(fp.load(world_connection.k[axis]), projection1));
         average[axis] = fp.add(part1[axis], part0[axis]);
-        if (axis != 1) average[axis] = fp.load(fp.store_float(average[axis]));
+        if (axis != 1) average[axis] = fp.round_float(average[axis]);
         average[axis] = fp.multiply(average[axis], fp.load(0.5));
-        if (axis == 2) average[axis] = fp.load(fp.store_double(average[axis]));
-        average[axis] = fp.load(fp.store_float(average[axis]));
+        if (axis == 2) average[axis] = fp.round_double(average[axis]);
+        average[axis] = fp.round_float(average[axis]);
     }
     const IVP_U_Float80 factor0 = fp.load(ease_factor);
     const IVP_U_Float80 factor1 = fp.multiply(fp.load(reverse_factor), factor0);
@@ -1833,7 +1833,7 @@ static void ivp_energizer_add_multiple(IVP_X87_Arithmetic &fp, IVP_U_Float_Point
     for (int i = 0; i < 3; ++i)
     {
         const IVP_U_Float80 sum = fp.add(fp.multiply(fp.load(v->k[i]), f), fp.load(target->k[i]));
-        target->k[i] = i == 0 ? fp.store_float(sum) : fp.store_float(fp.load(fp.store_double(sum)));
+        target->k[i] = i == 0 ? fp.store_float(sum) : fp.store_float(fp.round_double(sum));
     }
 }
 #endif

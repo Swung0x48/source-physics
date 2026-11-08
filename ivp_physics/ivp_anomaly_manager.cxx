@@ -132,7 +132,7 @@ void IVP_Anomaly_Manager::solve_inter_penetration_simple(IVP_Real_Object *obj0, 
     for (int axis = 0; axis < 3; ++axis)
     {
         IVP_U_Float80 difference = fp.subtract(fp.load(m_world_f_core1->vv.k[axis]), fp.load(m_world_f_core0->vv.k[axis]));
-        if (axis == 2) difference = fp.load(fp.store_double(difference));
+        if (axis == 2) difference = fp.round_double(difference);
         vec01.k[axis] = fp.store_float(difference);
     }
 #else
@@ -266,7 +266,7 @@ void IVP_Anomaly_Manager::inter_penetration(IVP_Mindist *mindist, IVP_Real_Objec
         for (int axis = 0; axis < 3; ++axis)
         {
             IVP_U_Float80 velocity = fp.multiply(fp.load(world_push_vec.k[axis]), speed_change);
-            if (axis == 2) velocity = fp.load(fp.store_double(velocity));
+            if (axis == 2) velocity = fp.round_double(velocity);
             world_push_vec.k[axis] = fp.store_float(velocity);
         }
 #else

@@ -1015,7 +1015,7 @@ void IVP_Friction_Solver::calc_distance_matrix_column(int current_contact_point_
 #if IVP_ENABLE_X87_EMULATION
             IVP_X87_Arithmetic fp(IVP_X87_Control::current());
             IVP_U_Float80 rotation = rotation_vec->dot_product_extended(fp, &info->contact_cross_nomal_cs[which_obj]);
-            if (spill_rotation_dot) rotation = fp.load(fp.store_double(rotation));
+            if (spill_rotation_dot) rotation = fp.round_double(rotation);
             const IVP_U_Float80 translation = translation_vec->dot_product_extended(fp, &info->surf_normal);
             const IVP_U_Float80 speed_change = fp.multiply(fp.load(factor), fp.add(translation, rotation));
             IVP_DOUBLE &element = dist_change_mat.matrix_values[line_num * dist_change_mat.aligned_row_len + current_contact_point_index];

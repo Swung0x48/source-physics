@@ -35,12 +35,12 @@ static void contact_normal_cross(const IVP_U_Matrix *matrix,
         fp.multiply(fp.load(matrix->get_elem(order[1], 0)), fp.load(normal->k[order[1]]))),
         fp.multiply(fp.load(matrix->get_elem(order[2], 0)), fp.load(normal->k[order[2]])));
     for (int axis = 1; axis < 3; ++axis)
-        n[axis] = fp.load(fp.store_float(fp.add(fp.add(
+        n[axis] = fp.round_float(fp.add(fp.add(
             fp.multiply(fp.load(matrix->get_elem(1, axis)), fp.load(normal->k[1])),
             fp.multiply(fp.load(normal->k[0]), fp.load(matrix->get_elem(0, axis)))),
-            fp.multiply(fp.load(matrix->get_elem(2, axis)), fp.load(normal->k[2])))));
-    const IVP_U_Float80 y_times_x = fp.load(fp.store_double(fp.multiply(n[1], fp.load(point->k[0]))));
-    const IVP_U_Float80 x_times_y = fp.load(fp.store_double(fp.multiply(n[0], fp.load(point->k[1]))));
+            fp.multiply(fp.load(matrix->get_elem(2, axis)), fp.load(normal->k[2]))));
+    const IVP_U_Float80 y_times_x = fp.round_double(fp.multiply(n[1], fp.load(point->k[0])));
+    const IVP_U_Float80 x_times_y = fp.round_double(fp.multiply(n[0], fp.load(point->k[1])));
     cross->k[0] = fp.store_float(fp.subtract(fp.multiply(n[2], fp.load(point->k[1])), fp.multiply(n[1], fp.load(point->k[2]))));
     cross->k[1] = fp.store_float(fp.subtract(fp.multiply(n[0], fp.load(point->k[2])), fp.multiply(n[2], fp.load(point->k[0]))));
     cross->k[2] = fp.store_float(fp.subtract(y_times_x, x_times_y));

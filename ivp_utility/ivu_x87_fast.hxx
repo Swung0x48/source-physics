@@ -17,13 +17,34 @@
 #include <intrin.h>
 #endif
 
+// The fast path is a handful of small integer steps; each model operation must
+// get them as straight-line code, not as calls (a call costs about as much as
+// the step itself). A compiler attribute, not a target feature: other compilers
+// fall back to a plain inline request.
+#if defined(_MSC_VER)
+#define IVP_X87_FORCEINLINE __forceinline
+#elif defined(__GNUC__)
+#define IVP_X87_FORCEINLINE inline __attribute__((always_inline))
+#else
+#define IVP_X87_FORCEINLINE inline
+#endif
+
+// The general (SoftFloat) paths are rare: keep them out of the callers.
+#if defined(_MSC_VER)
+#define IVP_X87_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__)
+#define IVP_X87_NOINLINE __attribute__((noinline))
+#else
+#define IVP_X87_NOINLINE
+#endif
+
 struct IVP_X87_Fast_U128
 {
     uint64_t hi;
     uint64_t lo;
 };
 
-inline IVP_X87_Fast_U128 ivp_x87_fast_u128(uint64_t hi, uint64_t lo)
+IVP_X87_FORCEINLINE IVP_X87_Fast_U128 ivp_x87_fast_u128(uint64_t hi, uint64_t lo)
 {
     IVP_X87_Fast_U128 result;
     result.hi = hi;
@@ -31,7 +52,7 @@ inline IVP_X87_Fast_U128 ivp_x87_fast_u128(uint64_t hi, uint64_t lo)
     return result;
 }
 
-inline IVP_X87_Fast_U128 ivp_x87_fast_multiply64(uint64_t a, uint64_t b)
+IVP_X87_FORCEINLINE IVP_X87_Fast_U128 ivp_x87_fast_multiply64(uint64_t a, uint64_t b)
 {
 #if defined(_MSC_VER) && defined(_M_X64)
     IVP_X87_Fast_U128 result;
@@ -52,7 +73,7 @@ inline IVP_X87_Fast_U128 ivp_x87_fast_multiply64(uint64_t a, uint64_t b)
 #endif
 }
 
-inline int ivp_x87_fast_leading_zeros(uint64_t value) // value != 0
+IVP_X87_FORCEINLINE int ivp_x87_fast_leading_zeros(uint64_t value) // value != 0
 {
 #if defined(_MSC_VER) && defined(_M_X64)
     unsigned long index;
@@ -77,7 +98,7 @@ inline int ivp_x87_fast_leading_zeros(uint64_t value) // value != 0
 }
 
 // (hi:lo) / divisor for a divisor with its top bit set and hi < divisor.
-inline uint64_t ivp_x87_fast_divide128(uint64_t hi, uint64_t lo, uint64_t divisor, uint64_t *remainder)
+IVP_X87_FORCEINLINE uint64_t ivp_x87_fast_divide128(uint64_t hi, uint64_t lo, uint64_t divisor, uint64_t *remainder)
 {
 #if defined(_MSC_VER) && defined(_M_X64) && _MSC_VER >= 1920 && !defined(__clang__) // clang-cl lacks _udiv128
     return _udiv128(hi, lo, divisor, remainder);
@@ -113,7 +134,7 @@ inline uint64_t ivp_x87_fast_divide128(uint64_t hi, uint64_t lo, uint64_t diviso
 }
 
 // value >> count, every bit shifted out ORed into bit 0.
-inline IVP_X87_Fast_U128 ivp_x87_fast_shift_right_jam(IVP_X87_Fast_U128 value, int count)
+IVP_X87_FORCEINLINE IVP_X87_Fast_U128 ivp_x87_fast_shift_right_jam(IVP_X87_Fast_U128 value, int count)
 {
     if(count == 0) return value;
     if(count < 64)
@@ -126,44 +147,55 @@ inline IVP_X87_Fast_U128 ivp_x87_fast_shift_right_jam(IVP_X87_Fast_U128 value, i
     return ivp_x87_fast_u128(0, static_cast<uint64_t>((value.hi | value.lo) != 0));
 }
 
-inline bool ivp_x87_fast_is_normal(const IVP_U_Float80 &value)
+IVP_X87_FORCEINLINE bool ivp_x87_fast_is_normal(const IVP_U_Float80 &value)
 {
     return static_cast<unsigned>((value.get_sign_exponent() & 0x7fff) - 1) < 0x7ffeu
         && (value.get_significand() >> 63) != 0;
 }
 
-inline bool ivp_x87_fast_is_zero(const IVP_U_Float80 &value)
+IVP_X87_FORCEINLINE bool ivp_x87_fast_is_zero(const IVP_U_Float80 &value)
 {
     return (value.get_sign_exponent() & 0x7fff) == 0 && value.get_significand() == 0;
 }
 
 // Normal or zero: the operand classes whose results the fast path can form.
-inline bool ivp_x87_fast_is_simple(const IVP_U_Float80 &value)
+IVP_X87_FORCEINLINE bool ivp_x87_fast_is_simple(const IVP_U_Float80 &value)
 {
     return ivp_x87_fast_is_normal(value) || ivp_x87_fast_is_zero(value);
 }
 
+// The nearest-even increment for a kept value whose lowest bit is `kept` & 1
+// and whose dropped bits are `rest` (top bit = one half): 1 when rest is above
+// one half, or exactly one half with an odd kept value. Written as the carry of
+// a 32-bit sum so that 32-bit targets need no 64-bit compare branches:
+// h = rest >> 32, s = (low half of rest != 0); h + 0x7fffffff + (lsb | s)
+// carries past 32 bits exactly when h > 2^31, or h == 2^31 and (s or lsb).
+IVP_X87_FORCEINLINE uint64_t ivp_x87_fast_round_increment(uint64_t rest, uint64_t kept)
+{
+    const uint64_t sticky = static_cast<uint64_t>(static_cast<uint32_t>(rest) != 0);
+    return (static_cast<uint64_t>(static_cast<uint32_t>(rest >> 32)) + 0x7fffffffu + ((kept | sticky) & 1)) >> 32;
+}
+
 // Rounds `significand` with the 64 bits below it in `rest` (top bit = one half)
 // and packs it; false outside the normal exponent range.
-inline bool ivp_x87_fast_round_pack(unsigned sign, int exponent, uint64_t significand, uint64_t rest,
+IVP_X87_FORCEINLINE bool ivp_x87_fast_round_pack(unsigned sign, int exponent, uint64_t significand, uint64_t rest,
     IVP_U_Float80 *result, bool *inexact)
 {
     if(exponent <= 0) return false;
-    const uint64_t half = UINT64_C(1) << 63;
     // Branch-free: the decision is data-dependent and poorly predicted.
-    const uint64_t up = static_cast<uint64_t>(rest > half) | (static_cast<uint64_t>(rest == half) & significand);
+    const uint64_t up = ivp_x87_fast_round_increment(rest, significand);
     significand += up;
     const uint64_t carry = static_cast<uint64_t>(significand == 0) & up; // all ones + 1: next binade
     significand |= carry << 63;
     exponent += static_cast<int>(carry);
     if(exponent >= 0x7fff) return false;
     *result = IVP_U_Float80::from_bits(static_cast<uint16_t>(exponent | (sign << 15)), significand);
-    *inexact = *inexact || rest != 0;
+    *inexact = *inexact | (rest != 0);
     return true;
 }
 
 // a + (b with its sign flipped when negate_second): operands normal.
-inline bool ivp_x87_fast_add(const IVP_U_Float80 &a, const IVP_U_Float80 &b, unsigned negate_second,
+IVP_X87_FORCEINLINE bool ivp_x87_fast_add(const IVP_U_Float80 &a, const IVP_U_Float80 &b, unsigned negate_second,
     IVP_U_Float80 *result, bool *inexact)
 {
     const uint16_t a_se = a.get_sign_exponent();
@@ -237,7 +269,7 @@ inline bool ivp_x87_fast_add(const IVP_U_Float80 &a, const IVP_U_Float80 &b, uns
     return ivp_x87_fast_round_pack(sign, big_exp - shift, hi, lo, result, inexact);
 }
 
-inline bool ivp_x87_fast_multiply(const IVP_U_Float80 &a, const IVP_U_Float80 &b, IVP_U_Float80 *result,
+IVP_X87_FORCEINLINE bool ivp_x87_fast_multiply(const IVP_U_Float80 &a, const IVP_U_Float80 &b, IVP_U_Float80 *result,
     bool *inexact)
 {
     const unsigned sign = static_cast<unsigned>((a.get_sign_exponent() ^ b.get_sign_exponent()) >> 15);
@@ -255,7 +287,7 @@ inline bool ivp_x87_fast_multiply(const IVP_U_Float80 &a, const IVP_U_Float80 &b
     return ivp_x87_fast_round_pack(sign, exponent + static_cast<int>(carry), significand, rest, result, inexact);
 }
 
-inline bool ivp_x87_fast_divide(const IVP_U_Float80 &a, const IVP_U_Float80 &b, IVP_U_Float80 *result,
+IVP_X87_FORCEINLINE bool ivp_x87_fast_divide(const IVP_U_Float80 &a, const IVP_U_Float80 &b, IVP_U_Float80 *result,
     bool *inexact)
 {
     const unsigned sign = static_cast<unsigned>((a.get_sign_exponent() ^ b.get_sign_exponent()) >> 15);
@@ -289,7 +321,7 @@ inline bool ivp_x87_fast_divide(const IVP_U_Float80 &a, const IVP_U_Float80 &b, 
     return ivp_x87_fast_round_pack(sign, exponent, quotient, rest, result, inexact);
 }
 
-inline bool ivp_x87_fast_load_float(float value, IVP_U_Float80 *result)
+IVP_X87_FORCEINLINE bool ivp_x87_fast_load_float(float value, IVP_U_Float80 *result)
 {
     uint32_t bits;
     memcpy(&bits, &value, sizeof(bits));
@@ -305,7 +337,7 @@ inline bool ivp_x87_fast_load_float(float value, IVP_U_Float80 *result)
     return true;
 }
 
-inline bool ivp_x87_fast_load_double(double value, IVP_U_Float80 *result)
+IVP_X87_FORCEINLINE bool ivp_x87_fast_load_double(double value, IVP_U_Float80 *result)
 {
     uint64_t bits;
     memcpy(&bits, &value, sizeof(bits));
@@ -321,32 +353,33 @@ inline bool ivp_x87_fast_load_double(double value, IVP_U_Float80 *result)
     return true;
 }
 
-// Rounds the significand to `bits` bits for an IEEE format with the given bias
-// and maximum biased exponent; false outside its normal range.
-inline bool ivp_x87_fast_narrow(const IVP_U_Float80 &value, int bits, int bias, int maximum, uint64_t *mantissa,
-    int *exponent, bool *inexact)
+// Rounds the significand to Bits bits for an IEEE format with the given bias
+// and maximum biased exponent; false outside its normal range. A template, so
+// the shifts are constants for each of the two formats.
+template <int Bits, int Bias, int Maximum>
+IVP_X87_FORCEINLINE bool ivp_x87_fast_narrow(const IVP_U_Float80 &value, uint64_t *mantissa, int *exponent,
+    bool *inexact)
 {
     if(!ivp_x87_fast_is_normal(value)) return false;
-    int biased = (value.get_sign_exponent() & 0x7fff) - 0x3fff + bias;
+    int biased = (value.get_sign_exponent() & 0x7fff) - 0x3fff + Bias;
     if(biased <= 0) return false;
     const uint64_t significand = value.get_significand();
-    uint64_t kept = significand >> (64 - bits);
-    const uint64_t rest = significand << bits;
-    const uint64_t half = UINT64_C(1) << 63;
-    kept += static_cast<uint64_t>(rest > half) | (static_cast<uint64_t>(rest == half) & kept);
-    if(kept >> bits)
+    uint64_t kept = significand >> (64 - Bits);
+    const uint64_t rest = significand << Bits;
+    kept += ivp_x87_fast_round_increment(rest, kept);
+    if(kept >> Bits)
     {
         kept >>= 1;
         ++biased;
     }
-    if(biased >= maximum) return false;
+    if(biased >= Maximum) return false;
     *mantissa = kept;
     *exponent = biased;
-    *inexact = *inexact || rest != 0;
+    *inexact = *inexact | (rest != 0);
     return true;
 }
 
-inline bool ivp_x87_fast_store_float(const IVP_U_Float80 &value, float *result, bool *inexact)
+IVP_X87_FORCEINLINE bool ivp_x87_fast_store_float(const IVP_U_Float80 &value, float *result, bool *inexact)
 {
     uint64_t mantissa;
     int exponent;
@@ -357,15 +390,15 @@ inline bool ivp_x87_fast_store_float(const IVP_U_Float80 &value, float *result, 
         memcpy(result, &bits, sizeof(bits));
         return true;
     }
-    if(!ivp_x87_fast_narrow(value, 24, 127, 0xff, &mantissa, &exponent, &rounded)) return false;
+    if(!ivp_x87_fast_narrow<24, 127, 0xff>(value, &mantissa, &exponent, &rounded)) return false;
     const uint32_t bits = (static_cast<uint32_t>(value.get_sign_exponent() >> 15) << 31)
         | (static_cast<uint32_t>(exponent) << 23) | static_cast<uint32_t>(mantissa & 0x7fffffu);
     memcpy(result, &bits, sizeof(bits));
-    *inexact = *inexact || rounded;
+    *inexact = *inexact | rounded;
     return true;
 }
 
-inline bool ivp_x87_fast_store_double(const IVP_U_Float80 &value, double *result, bool *inexact)
+IVP_X87_FORCEINLINE bool ivp_x87_fast_store_double(const IVP_U_Float80 &value, double *result, bool *inexact)
 {
     uint64_t mantissa;
     int exponent;
@@ -376,11 +409,60 @@ inline bool ivp_x87_fast_store_double(const IVP_U_Float80 &value, double *result
         memcpy(result, &bits, sizeof(bits));
         return true;
     }
-    if(!ivp_x87_fast_narrow(value, 53, 1023, 0x7ff, &mantissa, &exponent, &rounded)) return false;
+    if(!ivp_x87_fast_narrow<53, 1023, 0x7ff>(value, &mantissa, &exponent, &rounded)) return false;
     const uint64_t bits = (static_cast<uint64_t>(value.get_sign_exponent() >> 15) << 63)
         | (static_cast<uint64_t>(exponent) << 52) | (mantissa & UINT64_C(0xfffffffffffff));
     memcpy(result, &bits, sizeof(bits));
-    *inexact = *inexact || rounded;
+    *inexact = *inexact | rounded;
+    return true;
+}
+
+// Rounds an extended value the way a store to float / double and a load back
+// would (the original's spill to memory), in one step; false where the store
+// would leave the normal range.
+template <int Bits, int Bias, int Maximum>
+IVP_X87_FORCEINLINE bool ivp_x87_fast_round(const IVP_U_Float80 &value, IVP_U_Float80 *result, bool *inexact)
+{
+    if(ivp_x87_fast_is_zero(value))
+    {
+        *result = IVP_U_Float80::from_bits(static_cast<uint16_t>(value.get_sign_exponent() & 0x8000), 0);
+        return true;
+    }
+    uint64_t mantissa;
+    int exponent;
+    if(!ivp_x87_fast_narrow<Bits, Bias, Maximum>(value, &mantissa, &exponent, inexact)) return false;
+    *result = IVP_U_Float80::from_bits(
+        static_cast<uint16_t>((exponent - Bias + 0x3fff) | (value.get_sign_exponent() & 0x8000)), mantissa << (64 - Bits));
+    return true;
+}
+
+// Order of two normal or zero values (-1 less, 0 equal, 1 greater; +0 == -0),
+// the answer SoftFloat's compare gives; it raises no flag for these operands.
+// false for any other class.
+IVP_X87_FORCEINLINE bool ivp_x87_fast_compare(const IVP_U_Float80 &a, const IVP_U_Float80 &b, int *relation)
+{
+    if(!ivp_x87_fast_is_simple(a) || !ivp_x87_fast_is_simple(b)) return false;
+    if(ivp_x87_fast_is_zero(a) && ivp_x87_fast_is_zero(b))
+    {
+        *relation = 0;
+        return true;
+    }
+    // With one zero (exponent 0, below every normal) sign and magnitude still give the order.
+    const unsigned a_sign = a.get_sign_exponent() >> 15, b_sign = b.get_sign_exponent() >> 15;
+    if(a_sign != b_sign)
+    {
+        *relation = a_sign ? -1 : 1;
+        return true;
+    }
+    const int a_exp = a.get_sign_exponent() & 0x7fff, b_exp = b.get_sign_exponent() & 0x7fff;
+    const uint64_t a_sig = a.get_significand(), b_sig = b.get_significand();
+    if(a_exp == b_exp && a_sig == b_sig)
+    {
+        *relation = 0;
+        return true;
+    }
+    const bool smaller = a_exp < b_exp || (a_exp == b_exp && a_sig < b_sig);
+    *relation = smaller != (a_sign != 0) ? -1 : 1;
     return true;
 }
 

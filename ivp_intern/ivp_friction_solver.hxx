@@ -112,7 +112,7 @@ void IVP_Friction_Solver::apply_impulse(const IVP_Impact_Solver_Long_Term *info,
         for (int i = 0; i < 3; ++i)
         {
             const IVP_U_Float80 sum = fp.add(fp.multiply(fp.load(info->surf_normal.k[i]), f), fp.load(c1->speed.k[i]));
-            c1->speed.k[i] = i == 0 ? fp.store_float(sum) : fp.store_float(fp.load(fp.store_double(sum)));
+            c1->speed.k[i] = i == 0 ? fp.store_float(sum) : fp.store_float(fp.round_double(sum));
         }
     }
 #else

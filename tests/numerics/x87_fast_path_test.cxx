@@ -162,6 +162,33 @@ int main(int argc, char **argv)
             && IVP_FLAGS_MATCH(fp, status),
             "store_double", a, a);
 
+        // Compare, quiet and signaling, for every operand class.
+        for(int quiet = 0; quiet < 2; ++quiet)
+        {
+            status = reference_status();
+            fp.clear_exception_flags();
+            check(static_cast<int>(fp.compare(a, b, quiet != 0)) == extF80_compare(raw(a), raw(b), quiet, &status)
+                && IVP_FLAGS_MATCH(fp, status),
+                quiet ? "compare (quiet)" : "compare", a, b);
+        }
+        status = reference_status();
+        fp.clear_exception_flags();
+        check(static_cast<int>(fp.compare(a, a)) == extF80_compare(raw(a), raw(a), 0, &status)
+            && IVP_FLAGS_MATCH(fp, status),
+            "compare (equal)", a, a);
+
+        // A spill to double / float and back in one operation.
+        status = reference_status();
+        fp.clear_exception_flags();
+        check(same(fp.round_double(a), f64_to_extF80(extF80_to_f64(raw(a), &status), &status))
+            && IVP_FLAGS_MATCH(fp, status),
+            "round_double", a, a);
+        status = reference_status();
+        fp.clear_exception_flags();
+        check(same(fp.round_float(a), f32_to_extF80(extF80_to_f32(raw(a), &status), &status))
+            && IVP_FLAGS_MATCH(fp, status),
+            "round_float", a, a);
+
         const uint32_t single_bits = static_cast<uint32_t>(next());
         float single;
         memcpy(&single, &single_bits, sizeof(single));
@@ -179,6 +206,24 @@ int main(int argc, char **argv)
         check(same(fp.load(value), f64_to_extF80(double_bits, &status))
             && IVP_FLAGS_MATCH(fp, status),
             "load(double)", a, a);
+    }
+
+    // The nearest-even increment against its definition at the boundaries and at random.
+    {
+        const uint64_t half = 1ull << 63;
+        const uint64_t edges[] = {0, 1, half - 1, half, half + 1, ~0ull, 0x7fffffff00000000ull, 0x80000000ffffffffull,
+            0x8000000100000000ull, 0x7fffffffffffffffull};
+        for(int i = 0; i < 10 + cases / 10; ++i)
+        {
+            const uint64_t rest = i < 10 ? edges[i] : next();
+            for(uint64_t kept = 0; kept < 2; ++kept)
+            {
+                const uint64_t expected = static_cast<uint64_t>(rest > half) | (static_cast<uint64_t>(rest == half) & kept);
+                if(ivp_x87_fast_round_increment(rest, kept | 0x10) != expected && ++failures <= 10)
+                    std::printf("round increment mismatch: %016llx %d\n", static_cast<unsigned long long>(rest),
+                        static_cast<int>(kept));
+            }
+        }
     }
 
     // Other precision and rounding selections do not take the fast path.

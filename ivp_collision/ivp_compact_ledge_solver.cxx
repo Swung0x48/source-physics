@@ -257,13 +257,14 @@ static void ivp_transform_collision_point(const IVP_U_Float_Point *point,
 {
     IVP_X87_Arithmetic fp(IVP_X87_Control::current());
     IVP_U_Float80 translated[3];
+    const IVP_U_Float80 p[3] = {fp.load(point->k[0]), fp.load(point->k[1]), fp.load(point->k[2])}; // exact, once
     for (int axis = 0; axis < 3; ++axis)
     {
-        IVP_U_Float80 sum = fp.multiply(fp.load(forward->get_elem(axis, 0)), fp.load(point->k[0]));
-        if (axis != 2) sum = fp.load(fp.store_double(sum));
-        sum = fp.add(fp.multiply(fp.load(forward->get_elem(axis, 1)), fp.load(point->k[1])), sum);
-        if (axis != 2) sum = fp.load(fp.store_double(sum));
-        sum = fp.add(fp.multiply(fp.load(forward->get_elem(axis, 2)), fp.load(point->k[2])), sum);
+        IVP_U_Float80 sum = fp.multiply(fp.load(forward->get_elem(axis, 0)), p[0]);
+        if (axis != 2) sum = fp.round_double(sum);
+        sum = fp.add(fp.multiply(fp.load(forward->get_elem(axis, 1)), p[1]), sum);
+        if (axis != 2) sum = fp.round_double(sum);
+        sum = fp.add(fp.multiply(fp.load(forward->get_elem(axis, 2)), p[2]), sum);
         const IVP_DOUBLE world = fp.store_double(fp.add(sum, fp.load(forward->vv.k[axis])));
         translated[axis] = fp.subtract(fp.load(world), fp.load(inverse->vv.k[axis]));
     }
@@ -369,7 +370,7 @@ void IVP_Compact_Ledge_Solver::calc_unscaled_s_val_K_space(const IVP_Compact_Led
         {
             d[i] = fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i]));
             d0[i] = fp.subtract(fp.load(p0->k[i]), fp.load(p_object->k[i]));
-            d1[i] = fp.load(fp.store_double(fp.subtract(fp.load(p1->k[i]), fp.load(p_object->k[i]))));
+            d1[i] = fp.round_double(fp.subtract(fp.load(p1->k[i]), fp.load(p_object->k[i])));
         }
         result->checks[0] = fp.store_float(fp.negate(fp.add(fp.add(fp.multiply(d[2], d0[2]), fp.multiply(d[1], d0[1])), fp.multiply(d0[0], d[0]))));
         result->checks[1] = fp.store_float(fp.add(fp.add(fp.multiply(d[2], d1[2]), fp.multiply(d[1], d1[1])), fp.multiply(d1[0], d[0])));
@@ -481,16 +482,17 @@ void IVP_Compact_Ledge_Solver::calc_unscaled_qr_vals_F_space(const IVP_Compact_L
         IVP_U_Float80 Q[3], R[3], P[3];
         for (int i = 0; i < 3; ++i)
         {
-            Q[i] = fp.subtract(fp.load(tp->k[i]), fp.load(tp_next->k[i]));
-            R[i] = fp.subtract(fp.load(tp_prev->k[i]), fp.load(tp_next->k[i]));
-            P[i] = fp.load(fp.store_double(fp.subtract(fp.load(p_object->k[i]), fp.load(tp_next->k[i]))));
+            const IVP_U_Float80 next = fp.load(tp_next->k[i]); // exact, once
+            Q[i] = fp.subtract(fp.load(tp->k[i]), next);
+            R[i] = fp.subtract(fp.load(tp_prev->k[i]), next);
+            P[i] = fp.round_double(fp.subtract(fp.load(p_object->k[i]), next));
         }
-        const IVP_U_Float80 QQ = fp.load(fp.store_double(fp.add(fp.add(fp.multiply(Q[2], Q[2]), fp.multiply(Q[0], Q[0])), fp.multiply(Q[1], Q[1]))));
-        const IVP_U_Float80 RR = fp.load(fp.store_double(fp.add(fp.add(fp.multiply(R[2], R[2]), fp.multiply(R[1], R[1])), fp.multiply(R[0], R[0]))));
-        const IVP_U_Float80 QR = fp.load(fp.store_double(fp.add(fp.add(fp.multiply(R[2], Q[2]), fp.multiply(R[1], Q[1])), fp.multiply(R[0], Q[0]))));
-        const IVP_U_Float80 Det = fp.load(fp.store_double(fp.subtract(fp.multiply(RR, QQ), fp.multiply(QR, QR))));
-        const IVP_U_Float80 sq = fp.load(fp.store_double(fp.add(fp.add(fp.multiply(P[2], Q[2]), fp.multiply(P[1], Q[1])), fp.multiply(P[0], Q[0]))));
-        const IVP_U_Float80 sr = fp.load(fp.store_double(fp.add(fp.add(fp.multiply(P[2], R[2]), fp.multiply(P[1], R[1])), fp.multiply(P[0], R[0]))));
+        const IVP_U_Float80 QQ = fp.round_double(fp.add(fp.add(fp.multiply(Q[2], Q[2]), fp.multiply(Q[0], Q[0])), fp.multiply(Q[1], Q[1])));
+        const IVP_U_Float80 RR = fp.round_double(fp.add(fp.add(fp.multiply(R[2], R[2]), fp.multiply(R[1], R[1])), fp.multiply(R[0], R[0])));
+        const IVP_U_Float80 QR = fp.round_double(fp.add(fp.add(fp.multiply(R[2], Q[2]), fp.multiply(R[1], Q[1])), fp.multiply(R[0], Q[0])));
+        const IVP_U_Float80 Det = fp.round_double(fp.subtract(fp.multiply(RR, QQ), fp.multiply(QR, QR)));
+        const IVP_U_Float80 sq = fp.round_double(fp.add(fp.add(fp.multiply(P[2], Q[2]), fp.multiply(P[1], Q[1])), fp.multiply(P[0], Q[0])));
+        const IVP_U_Float80 sr = fp.round_double(fp.add(fp.add(fp.multiply(P[2], R[2]), fp.multiply(P[1], R[1])), fp.multiply(P[0], R[0])));
         const IVP_U_Float80 q = fp.subtract(fp.multiply(sq, RR), fp.multiply(sr, QR));
         const IVP_U_Float80 r = fp.subtract(fp.multiply(sr, QQ), fp.multiply(sq, QR));
         result->scale = fp.store_float(Det);
@@ -545,15 +547,15 @@ static IVP_U_Float80 ivp_quad_dist_edge_to_point_extended(IVP_X87_Arithmetic &fp
     IVP_U_Float80 v[3], e[3];
     for (int i = 0; i < 3; ++i)
     {
-        v[i] = fp.load(fp.store_double(fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i]))));
-        e[i] = fp.load(fp.store_double(fp.subtract(fp.load(p0->k[i]), fp.load(p1->k[i]))));
+        v[i] = fp.round_double(fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i])));
+        e[i] = fp.round_double(fp.subtract(fp.load(p0->k[i]), fp.load(p1->k[i])));
     }
-    const IVP_U_Float80 wx = fp.load(fp.store_double(fp.subtract(fp.load(object_pos->k[0]), fp.load(p0->k[0]))));
-    const IVP_U_Float80 wy = fp.load(fp.store_double(fp.subtract(fp.load(object_pos->k[1]), fp.load(p0->k[1]))));
+    const IVP_U_Float80 wx = fp.round_double(fp.subtract(fp.load(object_pos->k[0]), fp.load(p0->k[0])));
+    const IVP_U_Float80 wy = fp.round_double(fp.subtract(fp.load(object_pos->k[1]), fp.load(p0->k[1])));
     const IVP_U_Float80 wz = fp.subtract(fp.load(object_pos->k[2]), fp.load(p0->k[2]));
-    const IVP_U_Float80 cx = fp.load(fp.store_double(fp.subtract(fp.multiply(wy, v[2]), fp.multiply(wz, v[1]))));
+    const IVP_U_Float80 cx = fp.round_double(fp.subtract(fp.multiply(wy, v[2]), fp.multiply(wz, v[1])));
     const IVP_U_Float80 cy = fp.subtract(fp.multiply(wz, v[0]), fp.multiply(wx, v[2]));
-    const IVP_U_Float80 cz = fp.load(fp.store_double(fp.subtract(fp.multiply(wx, v[1]), fp.multiply(wy, v[0]))));
+    const IVP_U_Float80 cz = fp.round_double(fp.subtract(fp.multiply(wx, v[1]), fp.multiply(wy, v[0])));
     const IVP_U_Float80 edge_ql = fp.add(fp.add(fp.multiply(e[2], e[2]), fp.multiply(e[0], e[0])), fp.multiply(e[1], e[1]));
     return fp.multiply(fp.add(fp.add(fp.multiply(cz, cz), fp.multiply(cy, cy)), fp.multiply(cx, cx)),
                        fp.divide(fp.load(1.0), edge_ql));
@@ -777,8 +779,9 @@ void IVP_Compact_Ledge_Solver::calc_hesse_vec_object_not_normized(const IVP_Comp
     IVP_U_Float80 a[3], b[3];
     for (int i = 0; i < 3; ++i)
     {
-        a[i] = fp.load(fp.store_double(fp.subtract(fp.load(p2->k[i]), fp.load(p0->k[i]))));
-        b[i] = fp.subtract(fp.load(p1->k[i]), fp.load(p0->k[i]));
+        const IVP_U_Float80 origin = fp.load(p0->k[i]); // exact, once
+        a[i] = fp.round_double(fp.subtract(fp.load(p2->k[i]), origin));
+        b[i] = fp.subtract(fp.load(p1->k[i]), origin);
     }
     for (int i = 0; i < 3; ++i)
     {

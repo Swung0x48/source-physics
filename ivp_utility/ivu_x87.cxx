@@ -363,6 +363,8 @@ IVP_U_Float80 IVP_X87_Arithmetic::negate(const IVP_U_Float80 &value)
 IVP_X87_Arithmetic::Relation IVP_X87_Arithmetic::compare(
     const IVP_U_Float80 &first, const IVP_U_Float80 &second, bool quiet)
 {
+    int relation;
+    if(ivp_x87_fast_compare(first, second, &relation)) return static_cast<Relation>(relation);
     return static_cast<Relation>(extF80_compare(ivp_x87_input(first), ivp_x87_input(second), quiet,
         static_cast<softfloat_status_t *>(get_status())));
 }
