@@ -892,9 +892,9 @@ IVP_Compact_Ledge *IVP_SurfaceBuilder_Pointsoup::convert_triangle_to_compace_led
     return cl;
 }
 
-IVP_Compact_Ledge *IVP_SurfaceBuilder_Pointsoup::convert_pointsoup_to_compact_ledge(IVP_U_Vector<IVP_U_Point> *points)
-{
 #if IVP_ENABLE_X87_EMULATION
+void IVP_SurfaceBuilder_Pointsoup::enter_hull_precision()
+{
     IVP_X87_Control control = IVP_X87_Control::current();
     control.precision = IVP_X87_Arithmetic::PRECISION_64;
     IVP_X87_Control::set(control);
@@ -907,6 +907,13 @@ IVP_Compact_Ledge *IVP_SurfaceBuilder_Pointsoup::convert_pointsoup_to_compact_le
         _controlfp_s(&ignored, _PC_64, _MCW_PC);
     }
 #endif
+}
+#endif
+
+IVP_Compact_Ledge *IVP_SurfaceBuilder_Pointsoup::convert_pointsoup_to_compact_ledge(IVP_U_Vector<IVP_U_Point> *points)
+{
+#if IVP_ENABLE_X87_EMULATION
+    enter_hull_precision();
 #endif
 
     IVP_Compact_Ledge *result = NULL;

@@ -123,6 +123,13 @@ public:
      *****************************************************************************/
     static IVP_Compact_Ledge *IVP_CDECL convert_pointsoup_to_compact_ledge(IVP_U_Vector<IVP_U_Point> *points);
 
+#if IVP_ENABLE_X87_EMULATION
+    // What convert_pointsoup_to_compact_ledge does to the calling thread before it builds: the x87 precision goes to
+    // 64 bits and stays there. For a caller that skips a build it already has the result of (physics_RT's surface
+    // memo, BallanceMMO engine change #24).
+    static void enter_hull_precision();
+#endif
+
     /******************************************************************************
      *  Method:		convert_pointsoup_to_compact_surface
      *  Description:    This method will build the convex hull for the supplied
