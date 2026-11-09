@@ -175,6 +175,24 @@ void IVP_Event_Manager::simulate_time_events(IVP_Time_Manager *, IVP_Environment
 {
 }
 
+// BallanceMMO (engine change #24): the simulation's x87 precision.  A 32-bit
+// x86 build computes in SSE2, except where the calling convention hands it a
+// double in ST(0): `sind(a) * b` multiplies a function's result in the x87.
+// Ipion set the x87 to 64-bit (extended) precision for every time step, so
+// such a product is rounded twice (64 bits, then 53 at the store) and comes
+// out one ulp from the SSE2 / NEON product of every 64-bit build now and then
+// (public test 2026-11-08, level 8: the slerp of synchronize_with_rot_z, a
+// ball's orientation 2 ulps off at a collision, every 32-bit client against
+// the x64 server).  At 53 bits an x87 product is the IEEE double product.
+// The upstream code keeps 64.
+#ifdef IVP_PORTABLE_BMMO
+#define IVP_SIM_X87_PRECISION _PC_53
+#define IVP_SIM_X87_PC_BITS 0x0200
+#else
+#define IVP_SIM_X87_PRECISION _PC_64
+#define IVP_SIM_X87_PC_BITS 0x0300
+#endif
+
 void IVP_Time_Manager::event_loop(IVP_Environment *env, IVP_Time time)
 {
     /************************************************
@@ -185,12 +203,12 @@ void IVP_Time_Manager::event_loop(IVP_Environment *env, IVP_Time time)
     unsigned int oldControl = 0;
     unsigned int ignoredControl = 0;
     _controlfp_s(&oldControl, 0, 0);
-    _controlfp_s(&ignoredControl, _PC_64, _MCW_PC);
+    _controlfp_s(&ignoredControl, IVP_SIM_X87_PRECISION, _MCW_PC);
 #elif defined(WIN32) && (defined(__i386__) || defined(_M_IX86)) && defined(__GNUC__)
     unsigned short tmpflag;
     __asm__ __volatile__("fstcw %0" : "=m"(tmpflag));
 
-    unsigned short newFPUflag = tmpflag | 0x0300;
+    unsigned short newFPUflag = (tmpflag & ~0x0300) | IVP_SIM_X87_PC_BITS;
     __asm__ __volatile__("fldcw %0" : : "m"(newFPUflag));
 #endif
 
@@ -221,12 +239,12 @@ void IVP_Time_Manager::simulate_variable_time_step(IVP_Environment *env, IVP_FLO
     unsigned int oldControl = 0;
     unsigned int ignoredControl = 0;
     _controlfp_s(&oldControl, 0, 0);
-    _controlfp_s(&ignoredControl, _PC_64, _MCW_PC);
+    _controlfp_s(&ignoredControl, IVP_SIM_X87_PRECISION, _MCW_PC);
 #elif defined(WIN32) && (defined(__i386__) || defined(_M_IX86)) && defined(__GNUC__)
     unsigned short tmpflag;
     __asm__ __volatile__("fstcw %0" : "=m"(tmpflag));
 
-    unsigned short newFPUflag = tmpflag | 0x0300;
+    unsigned short newFPUflag = (tmpflag & ~0x0300) | IVP_SIM_X87_PC_BITS;
     __asm__ __volatile__("fldcw %0" : : "m"(newFPUflag));
 #endif
     if (delta_time < IVP_MIN_DELTA_PSI_TIME)
