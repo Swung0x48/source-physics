@@ -251,6 +251,7 @@ IVP_Environment::IVP_Environment(IVP_Environment_Manager *manager, IVP_Applicati
     next_movement_check = IVP_MOVEMENT_CHECK_COUNT;
 #ifdef IVP_PORTABLE_BMMO
     bmmo_physics = IVP_FALSE;
+    bmmo_ball_order_key = NULL;
 #endif
 
     IVP_IF(1)

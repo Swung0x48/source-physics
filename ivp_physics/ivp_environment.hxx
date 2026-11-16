@@ -409,6 +409,10 @@ public:
     // the retail logic (this environment's single counter, the heap-address order), so a game outside a session
     // simulates as the 2002 DLL does.
     IVP_BOOL bmmo_physics;
+    // BallanceMMO: outside a session, the key that orders two balls' contact (#7's retail rule compares the
+    // client_data addresses, which change from run to run in every process).  NULL (the default) keeps the address;
+    // a host that must replay a run alike every time (the headless TAS playback) sets a stable key, e.g. the CK id.
+    unsigned int (*bmmo_ball_order_key)(void *client_data);
 #endif
 };
 

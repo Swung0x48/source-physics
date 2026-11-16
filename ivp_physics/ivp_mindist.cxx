@@ -380,8 +380,12 @@ void IVP_Mindist::init_mindist(IVP_Real_Object *pop0, IVP_Real_Object *pop1, con
             // by name: keys both processes give the same objects.
 #ifdef IVP_PORTABLE_BMMO
             // Only inside a physics session (IVP_Environment::bmmo_physics); outside one the retail address order.
-            if (pop0->get_environment()->bmmo_physics ? ivp_ball_pair_order(pop0, pop1) < 0
-                                                                   : pop0->client_data < pop1->client_data)
+            // Outside one, the host's stable key when it set one (IVP_Environment::bmmo_ball_order_key).
+            IVP_Environment *environment = pop0->get_environment();
+            if (environment->bmmo_physics ? ivp_ball_pair_order(pop0, pop1) < 0
+                : environment->bmmo_ball_order_key
+                      ? environment->bmmo_ball_order_key(pop0->client_data) < environment->bmmo_ball_order_key(pop1->client_data)
+                      : pop0->client_data < pop1->client_data)
 #else
             if (pop0->client_data < pop1->client_data)
 #endif
